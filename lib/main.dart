@@ -18,7 +18,7 @@ void main() => runApp(const OlieverfApp());
 
 // Top-level functions so they can run in a background isolate via compute().
 Painting _paintJob((SourceImage, PaintSettings) job) =>
-    paintImage(job.$1, job.$2);
+    paintPhoto(job.$1, job.$2);
 String _svgJob(Painting p) => paintingToSvg(p);
 
 class OlieverfApp extends StatelessWidget {

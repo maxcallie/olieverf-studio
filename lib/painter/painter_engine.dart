@@ -45,7 +45,7 @@ class _P {
   final double y;
 }
 
-Painting paintImage(SourceImage src, PaintSettings s) {
+Painting paintPhoto(SourceImage src, PaintSettings s) {
   final rng = math.Random(s.seed);
   final w = src.width, h = src.height, n = w * h;
 

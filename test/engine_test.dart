@@ -23,7 +23,7 @@ SourceImage _testImage(int w, int h) {
 
 void main() {
   test('engine produces strokes inside a sane range', () {
-    final p = paintImage(_testImage(200, 150), const PaintSettings());
+    final p = paintPhoto(_testImage(200, 150), const PaintSettings());
     expect(p.width, 200);
     expect(p.height, 150);
     expect(p.strokes, isNotEmpty);
@@ -36,14 +36,14 @@ void main() {
   });
 
   test('same seed gives the same painting', () {
-    final a = paintImage(_testImage(120, 120), const PaintSettings(seed: 3));
-    final b = paintImage(_testImage(120, 120), const PaintSettings(seed: 3));
+    final a = paintPhoto(_testImage(120, 120), const PaintSettings(seed: 3));
+    final b = paintPhoto(_testImage(120, 120), const PaintSettings(seed: 3));
     expect(a.strokes.length, b.strokes.length);
     expect(a.strokes.first.points, b.strokes.first.points);
   });
 
   test('svg export is well formed', () {
-    final p = paintImage(_testImage(100, 80), const PaintSettings());
+    final p = paintPhoto(_testImage(100, 80), const PaintSettings());
     final svg = paintingToSvg(p);
     expect(svg, startsWith('<?xml'));
     expect(svg, contains('viewBox="0 0 100 80"'));
