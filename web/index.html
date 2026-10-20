@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Zet foto's om in een schilderij van penseelstreken en exporteer als SVG.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+  <!-- iOS: als app op het beginscherm -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Olieverf">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#F4EFE6">
+  <title>Olieverf Studio</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #F4EFE6; }
+    #laden {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      font: 500 16px -apple-system, system-ui, sans-serif; color: #7a4a2e;
+    }
+  </style>
+</head>
+<body>
+  <div id="laden">Penselen worden uitgepakt…</div>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

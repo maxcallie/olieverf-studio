@@ -1,0 +1,15 @@
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+.DS_Store
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+**/Generated.xcconfig
