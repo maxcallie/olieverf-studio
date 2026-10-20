@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -38,6 +38,25 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
+
+      - name: Browsertest (iPhone/WebKit + Chrome)
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/srv && ln -s "$PWD/build/web" "/tmp/srv/${{ github.event.repository.name }}"
+          (cd /tmp/srv && nohup python3 -m http.server 8080 >/dev/null 2>&1 &)
+          npm i --no-save --no-package-lock playwright
+          npx playwright install --with-deps webkit chromium
+          node ci/smoke_test.mjs "http://localhost:8080/${{ github.event.repository.name }}/" ci-out
+
+      - name: Screenshots naar branch ci-screenshots
+        if: always()
+        run: |
+          [ -d ci-out ] || exit 0
+          cd ci-out
+          git init -q -b ci-screenshots
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Browsertest ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ci-screenshots
 
   deploy:
     needs: build
