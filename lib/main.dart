@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -210,23 +211,57 @@ class _StudioPageState extends State<StudioPage> {
       ),
       body: LayoutBuilder(builder: (context, c) {
         final wide = c.maxWidth >= 900;
-        final canvas = _buildCanvasArea();
-        final panel = _buildPanel();
         if (wide) {
           return Row(children: [
-            Expanded(child: canvas),
-            SizedBox(width: 340, child: panel),
+            Expanded(child: _buildCanvasArea(zoomable: true)),
+            SizedBox(width: 340, child: _buildPanel()),
           ]);
         }
+        // Phone: the picture only takes the room it needs (max 45%), and the
+        // settings get the rest. No pan/zoom here so swipes never get stuck;
+        // tap the picture to open a full-screen zoom view instead.
+        final aspect = _aspect;
+        final maxH = c.maxHeight * 0.45;
+        final h = aspect == null
+            ? maxH
+            : math.min(maxH, (c.maxWidth - 32) / aspect + 32);
         return Column(children: [
-          Expanded(child: canvas),
-          SizedBox(height: c.maxHeight * 0.42, child: panel),
+          SizedBox(height: h, child: _buildCanvasArea(zoomable: false)),
+          Expanded(child: _buildPanel()),
         ]);
       }),
     );
   }
 
-  Widget _buildCanvasArea() {
+  double? get _aspect {
+    final p = _painting;
+    if (p != null) return p.width / p.height;
+    final src = _source;
+    if (src != null) return src.width / src.height;
+    return null;
+  }
+
+  void _openZoom() {
+    final p = _painting;
+    if (p == null) return;
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (context) => Scaffold(
+        backgroundColor: const Color(0xFF1C1A17),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          title: const Text('Knijp om te zoomen'),
+        ),
+        body: InteractiveViewer(
+          maxScale: 10,
+          child: Center(child: PaintingView(painting: p, animate: false)),
+        ),
+      ),
+    ));
+  }
+
+  Widget _buildCanvasArea({required bool zoomable}) {
     Widget content;
     final painting = _painting;
     final original = _original;
@@ -238,23 +273,39 @@ class _StudioPageState extends State<StudioPage> {
         child: RawImage(image: original, fit: BoxFit.contain),
       );
     } else if (painting != null) {
-      content = InteractiveViewer(
-        maxScale: 8,
-        child: Center(
-          child: RepaintBoundary(
-            child: DecoratedBox(
-              decoration: BoxDecoration(boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withAlpha(40),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ]),
-              child: PaintingView(painting: painting, animate: _animate),
+      final view = RepaintBoundary(
+        child: DecoratedBox(
+          decoration: BoxDecoration(boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(40),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
             ),
-          ),
+          ]),
+          child: PaintingView(painting: painting, animate: _animate),
         ),
       );
+      content = zoomable
+          ? InteractiveViewer(maxScale: 8, child: Center(child: view))
+          : GestureDetector(
+              onTap: _openZoom,
+              child: Stack(children: [
+                view,
+                Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(110),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.zoom_out_map,
+                        size: 18, color: Colors.white),
+                  ),
+                ),
+              ]),
+            );
     } else {
       content = const SizedBox.shrink();
     }
@@ -303,7 +354,8 @@ class _StudioPageState extends State<StudioPage> {
       color: theme.colorScheme.surface,
       elevation: 2,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        padding: EdgeInsets.fromLTRB(
+            20, 12, 20, 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           Row(children: [
             Expanded(
@@ -333,7 +385,7 @@ class _StudioPageState extends State<StudioPage> {
               onSelectionChanged: (v) => setState(() => _showOriginal = v.first),
             ),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           _slider('Penseelgrootte', s.brushSize, 0.5, 2.0,
               (v) => s.copyWith(brushSize: v)),
           _slider('Detail', s.detail, 0.5, 2.5, (v) => s.copyWith(detail: v)),
@@ -399,21 +451,30 @@ class _StudioPageState extends State<StudioPage> {
 
   Widget _slider(String label, double value, double min, double max,
       PaintSettings Function(double) apply) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text(label, style: Theme.of(context).textTheme.labelLarge),
-        const Spacer(),
-        Text(value.toStringAsFixed(2),
-            style: Theme.of(context).textTheme.labelSmall),
+    final theme = Theme.of(context);
+    return SizedBox(
+      height: 44,
+      child: Row(children: [
+        SizedBox(
+          width: 116,
+          child: Text(label, style: theme.textTheme.labelLarge),
+        ),
+        Expanded(
+          child: Slider(
+            value: value < min ? min : (value > max ? max : value),
+            min: min,
+            max: max,
+            onChanged: (v) => _update(apply(v)),
+            onChangeEnd: (v) => _update(apply(v), rerender: true),
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(value.toStringAsFixed(2),
+              textAlign: TextAlign.right, style: theme.textTheme.labelSmall),
+        ),
       ]),
-      Slider(
-        value: value < min ? min : (value > max ? max : value),
-        min: min,
-        max: max,
-        onChanged: (v) => _update(apply(v)),
-        onChangeEnd: (v) => _update(apply(v), rerender: true),
-      ),
-    ]);
+    );
   }
 }
 

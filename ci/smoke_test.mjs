@@ -11,6 +11,23 @@ const photo = path.resolve('ci/test_photo.jpg');
 const report = [];
 let failed = false;
 
+async function swipe(page, x, y1, y2) {
+  await page.evaluate(async ([x, y1, y2]) => {
+    const target = document.querySelector('flutter-view') || document.body;
+    const fire = (type, y) => target.dispatchEvent(new PointerEvent(type, {
+      pointerId: 7, pointerType: 'touch', isPrimary: true, bubbles: true,
+      cancelable: true, composed: true, clientX: x, clientY: y,
+      buttons: type === 'pointerup' ? 0 : 1, pressure: type === 'pointerup' ? 0 : 0.5,
+    }));
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    fire('pointerdown', y1);
+    const steps = 14;
+    for (let i = 1; i <= steps; i++) { await sleep(16); fire('pointermove', y1 + (y2 - y1) * i / steps); }
+    await sleep(16);
+    fire('pointerup', y2);
+  }, [x, y1, y2]);
+}
+
 async function run(name, browserType, contextOpts) {
   const browser = await browserType.launch();
   const context = await browser.newContext({ ...contextOpts, acceptDownloads: true });
@@ -30,7 +47,7 @@ async function run(name, browserType, contextOpts) {
 
     // tap the empty state in the centre of the canvas area
     const isNarrow = vp.width < 900;
-    const canvasH = isNarrow ? (vp.height - 56) * 0.58 : vp.height - 56;
+    const canvasH = isNarrow ? (vp.height - 56) * 0.45 : vp.height - 56;
     const canvasW = isNarrow ? vp.width : vp.width - 340;
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser', { timeout: 15000 }),
@@ -45,6 +62,15 @@ async function run(name, browserType, contextOpts) {
     await shot('3-halverwege');
     await page.waitForTimeout(12000);
     await shot('4-klaar');
+
+    if (isNarrow) {
+      // touch swipe up over the settings panel (real touch pointer events)
+      await swipe(page, vp.width / 2, vp.height - 60, vp.height - 360);
+      await page.waitForTimeout(1200);
+      await shot('5-geveegd');
+      await swipe(page, vp.width / 2, 140, 40);
+      await page.waitForTimeout(600);
+    }
 
     // SVG export: first icon in the app bar (right side: [svg][png][8px])
     const [download] = await Promise.all([
