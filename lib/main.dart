@@ -242,7 +242,16 @@ class _StudioPageState extends State<StudioPage> {
         maxScale: 8,
         child: Center(
           child: RepaintBoundary(
-            child: PaintingView(painting: painting, animate: _animate),
+            child: DecoratedBox(
+              decoration: BoxDecoration(boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(40),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ]),
+              child: PaintingView(painting: painting, animate: _animate),
+            ),
           ),
         ),
       );
@@ -256,7 +265,7 @@ class _StudioPageState extends State<StudioPage> {
         Center(
           child: DecoratedBox(
             decoration: BoxDecoration(boxShadow: [
-              if (_source != null)
+              if (_source != null && _showOriginal)
                 BoxShadow(
                   color: Colors.black.withAlpha(40),
                   blurRadius: 24,
