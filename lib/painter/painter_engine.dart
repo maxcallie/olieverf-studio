@@ -309,7 +309,7 @@ List<BrushStroke> _paint(_Ctx c, StyleSpec st, ColorMap cmap, PaintSettings s,
         final line =
             _trace(c, px, py, base, blk, ang, bw, 2.5, rng, 0.5, stop: 0.2);
         _flatStroke(line, bw, col3, rng, st, 1.0, -1, strokes,
-            impasto: 0, opacity: 0.6, streakContrast: 0.05, bodyEnd: (0.5, 0.75));
+            impasto: 0, opacity: 0.6, streakContrast: 0.05, bodyEndRange: (0.5, 0.75));
       }
     }
   }
@@ -739,12 +739,12 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
     {double? impasto,
     double? opacity,
     double? streakContrast,
-    (double, double)? bodyEnd,
+    (double, double)? bodyEndRange,
     double? minLength}) {
   final impastoK = impasto ?? st.impasto;
   final opacityK = opacity ?? st.opacity;
   final streakK = streakContrast ?? st.streakContrast;
-  final bodyEndK = bodyEnd ?? st.bodyEnd;
+  final bodyEndK = bodyEndRange ?? st.bodyEnd;
   // minimum length: short stubs read as pixels
   final minLen = (minLength ?? st.minLength) * w;
   final l0 = _polyLength(line);
