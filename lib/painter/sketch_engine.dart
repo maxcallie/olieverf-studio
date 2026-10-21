@@ -741,5 +741,22 @@ Uint8List subjectMask(Float32List r0, Float32List g0, Float32List b0, int w,
       bg[i] = grown[i] > 0.02 ? 0 : 1;
     }
   }
+  // keep only the part connected to the focal point (drops stray patches)
+  final (lab, sizes) = components(fg, w, h);
+  if (sizes.length > 2) {
+    var id = lab[fi];
+    if (id == 0) {
+      var best = double.infinity;
+      for (var i = 0; i < n; i++) {
+        if (lab[i] != 0 && dsp[i] < best) {
+          best = dsp[i];
+          id = lab[i];
+        }
+      }
+    }
+    for (var i = 0; i < n; i++) {
+      fg[i] = lab[i] == id ? 1 : 0;
+    }
+  }
   return fg;
 }
