@@ -74,6 +74,18 @@ Kleurmodi: **Kleur**, **Zwart-wit**, **Sepia**, **Cyanotypie** en **Beperkt pale
 
 Alle instellingen per stijl staan in `lib/painter/styles.dart`.
 
+## Kunstenaarskeuzes
+
+Bovenop de penseelstreek maakt de engine keuzes zoals een schilder:
+
+- **Focus**: één focuspunt (automatisch, of tik op het schilderij). Daaromheen meer detail, scherpe randen en kleinere streken; verder weg grotere, lossere streken en "verloren" randen.
+- **Vereenvoudigen**: Kuwahara-filter (vlakken met behoud van randen) + groeperen in een paar waardes licht/midden/donker; sterker verder van de focus.
+- **Warm / koel**: lichten warmer, schaduwen koeler.
+- **Paletten**: Zorn (oker, vermiljoen, zwart, wit), Impressionistisch (geen zwart, violette schaduwen), Aardetinten, Nocturne.
+- **Ondergrond**: olieverf start op een sienna-ondergrond met een losse omber-onderschildering die in de losse delen doorschemert (SVG-groep `onderschildering`).
+- **Volgorde**: donker naar licht; reliëf (impasto) alleen op de lichten.
+- **Accenten**: tot slot een paar felle lichtjes en diepe donkers bij de focus (SVG-groep `accenten`).
+
 ## Instellingen in de app
 
 | Schuif | Effect |
