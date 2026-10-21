@@ -59,12 +59,14 @@ class _StudioPageState extends State<StudioPage> {
   bool _exporting = false;
   bool _animate = true;
   bool _showOriginal = false;
+  final GlobalKey _paintKey = GlobalKey();
   int _generation = 0;
 
   static const _papers = <int, String>{
     0xECE4D4: 'Crème',
     0xFAF8F3: 'Wit',
     0x9C978E: 'Grijs',
+    0xA86A45: 'Sienna',
     0x23201C: 'Zwart',
   };
 
@@ -133,9 +135,20 @@ class _StudioPageState extends State<StudioPage> {
           height: p.height,
           paperColor: color,
           strokes: p.strokes,
+          focusX: p.focusX,
+          focusY: p.focusY,
         );
       }
     });
+  }
+
+  /// Tap on the painting = choose the focal point.
+  void _setFocusFromTap(TapUpDetails d) {
+    final size = _paintKey.currentContext?.size;
+    if (size == null || _busy || _settings.focus <= 0) return;
+    final fx = math.min(1.0, math.max(0.0, d.localPosition.dx / size.width));
+    final fy = math.min(1.0, math.max(0.0, d.localPosition.dy / size.height));
+    _update(_settings.copyWith(focusX: fx, focusY: fy), rerender: true);
   }
 
   void _update(PaintSettings s, {bool rerender = false}) {
@@ -273,39 +286,54 @@ class _StudioPageState extends State<StudioPage> {
         child: RawImage(image: original, fit: BoxFit.contain),
       );
     } else if (painting != null) {
-      final view = RepaintBoundary(
-        child: DecoratedBox(
-          decoration: BoxDecoration(boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(40),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
+      final focusOn = _settings.focus > 0;
+      final view = GestureDetector(
+        key: _paintKey,
+        onTapUp: _setFocusFromTap,
+        child: Stack(children: [
+          RepaintBoundary(
+            child: DecoratedBox(
+              decoration: BoxDecoration(boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(40),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ]),
+              child: PaintingView(painting: painting, animate: _animate),
             ),
-          ]),
-          child: PaintingView(painting: painting, animate: _animate),
-        ),
+          ),
+          if (focusOn)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _FocusMarker(painting.focusX, painting.focusY,
+                      manual: _settings.focusX != null),
+                ),
+              ),
+            ),
+          if (!zoomable)
+            Positioned(
+              right: 6,
+              bottom: 6,
+              child: GestureDetector(
+                onTap: _openZoom,
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withAlpha(110),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.zoom_out_map,
+                      size: 18, color: Colors.white),
+                ),
+              ),
+            ),
+        ]),
       );
       content = zoomable
           ? InteractiveViewer(maxScale: 8, child: Center(child: view))
-          : GestureDetector(
-              onTap: _openZoom,
-              child: Stack(children: [
-                view,
-                Positioned(
-                  right: 6,
-                  bottom: 6,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withAlpha(110),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.zoom_out_map,
-                        size: 18, color: Colors.white),
-                  ),
-                ),
-              ]),
-            );
+          : view;
     } else {
       content = const SizedBox.shrink();
     }
@@ -426,6 +454,7 @@ class _StudioPageState extends State<StudioPage> {
             ]),
           ),
           const SizedBox(height: 12),
+          ..._artistControls(s),
           ..._sliders(s),
           const SizedBox(height: 8),
           Text('Ondergrond', style: theme.textTheme.labelLarge),
@@ -499,6 +528,34 @@ class _StudioPageState extends State<StudioPage> {
       };
 
   /// Only the sliders that do something for the current style.
+  /// Artist decisions shared by all styles: focus + simplification.
+  List<Widget> _artistControls(PaintSettings s) {
+    final theme = Theme.of(context);
+    return [
+      _slider('Focus', s.focus, 0.0, 1.0, (v) => s.copyWith(focus: v)),
+      _slider('Vereenvoudigen', s.simplify, 0.0, 1.0,
+          (v) => s.copyWith(simplify: v)),
+      if (s.focus > 0)
+        Row(children: [
+          Expanded(
+            child: Text(
+              s.focusX == null
+                  ? 'Focuspunt: automatisch · tik op het schilderij om te kiezen'
+                  : 'Focuspunt: zelf gekozen',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          if (s.focusX != null)
+            TextButton(
+              onPressed: () =>
+                  _update(s.copyWith(clearFocusPoint: true), rerender: true),
+              child: const Text('Automatisch'),
+            ),
+        ]),
+      const SizedBox(height: 4),
+    ];
+  }
+
   List<Widget> _sliders(PaintSettings s) {
     final spec = s.style.spec;
     if (spec.isSketch) {
@@ -521,6 +578,9 @@ class _StudioPageState extends State<StudioPage> {
       if (!spec.mono && s.colorMode == ColorMode.kleur)
         _slider('Kleurintensiteit', s.vibrance, 0.5, 1.6,
             (v) => s.copyWith(vibrance: v)),
+      if (s.colorMode == ColorMode.kleur && spec.temperature > 0)
+        _slider('Warm / koel', s.temperature, 0.0, 2.5,
+            (v) => s.copyWith(temperature: v)),
       _slider('Kleurvariatie', s.colorJitter, 0.0, 2.5,
           (v) => s.copyWith(colorJitter: v)),
       if (spec.bristles > 0 || spec.brush == BrushModel.flat)
@@ -558,6 +618,38 @@ class _StudioPageState extends State<StudioPage> {
   }
 }
 
+/// Small ring that shows the focal point on the painting.
+class _FocusMarker extends CustomPainter {
+  _FocusMarker(this.fx, this.fy, {required this.manual});
+  final double fx, fy;
+  final bool manual;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(fx * size.width, fy * size.height);
+    final r = math.max(8.0, size.shortestSide * 0.035);
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.5
+          ..color = Colors.black.withAlpha(70));
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..color = Colors.white.withAlpha(manual ? 230 : 150));
+    canvas.drawCircle(c, 2, Paint()..color = Colors.white.withAlpha(200));
+  }
+
+  @override
+  bool shouldRepaint(_FocusMarker old) =>
+      old.fx != fx || old.fy != fy || old.manual != manual;
+}
+
 class _ModeSwatch extends StatelessWidget {
   const _ModeSwatch({required this.mode});
   final ColorMode mode;
@@ -570,6 +662,10 @@ class _ModeSwatch extends StatelessWidget {
       ColorMode.sepia => const [Color(0xFF3D2410), Color(0xFF9C7A55), Color(0xFFF5E8CA)],
       ColorMode.cyanotypie => const [Color(0xFF0A2463), Color(0xFF4A78B5), Color(0xFFE0EEFF)],
       ColorMode.palet => const [Color(0xFFE07A5F), Color(0xFF81B29A), Color(0xFFF2CC8F)],
+      ColorMode.zorn => const [Color(0xFFC79A42), Color(0xFFD13D24), Color(0xFF17171C)],
+      ColorMode.impressionist => const [Color(0xFF5242A0), Color(0xFFFFE59E), Color(0xFF7FB7E6)],
+      ColorMode.aarde => const [Color(0xFF63492F), Color(0xFF9A4721), Color(0xFF73855F)],
+      ColorMode.nocturne => const [Color(0xFF0D1424), Color(0xFF385266), Color(0xFFE8B04A)],
     };
     return Container(
       width: 18,

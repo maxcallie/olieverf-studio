@@ -59,34 +59,115 @@ Painting paintPhoto(SourceImage src, PaintSettings s) {
     ((s.paperColor >> 8) & 0xFF) / 255.0,
     (s.paperColor & 0xFF) / 255.0,
   ];
-  final r = Float32List(n), g = Float32List(n), b = Float32List(n);
-  final lum = Float32List(n);
+  var r = Float32List(n), g = Float32List(n), b = Float32List(n);
   for (var i = 0; i < n; i++) {
     final o = i * 4;
     // composite (straight) alpha over the paper colour
     final al = src.rgba[o + 3] / 255.0;
-    final rr = src.rgba[o] / 255.0 * al + paper[0] * (1 - al);
-    final gg = src.rgba[o + 1] / 255.0 * al + paper[1] * (1 - al);
-    final bb = src.rgba[o + 2] / 255.0 * al + paper[2] * (1 - al);
-    r[i] = rr;
-    g[i] = gg;
-    b[i] = bb;
-    lum[i] = 0.299 * rr + 0.587 * gg + 0.114 * bb;
+    r[i] = src.rgba[o] / 255.0 * al + paper[0] * (1 - al);
+    g[i] = src.rgba[o + 1] / 255.0 * al + paper[1] * (1 - al);
+    b[i] = src.rgba[o + 2] / 255.0 * al + paper[2] * (1 - al);
+  }
+  final cmap = ColorMap(s.colorMode, r, g, b, rng);
+
+  // 1. focal point + focus weight per pixel (1 = in focus)
+  final (fe, fx, fy) = _focusMap(r, g, b, w, h, s);
+
+  // 2. simplify into masses: edge-preserving smoothing + value bands,
+  //    stronger away from the focus
+  if (s.simplify > 0) {
+    final longSide = math.max(w, h);
+    final k1 = kuwahara(r, g, b, w, h, math.max(1, (longSide * 0.004).round()));
+    final k2 =
+        kuwahara(k1.$1, k1.$2, k1.$3, w, h, math.max(2, (longSide * 0.009).round()));
+    final amount = Float32List(n);
+    for (var i = 0; i < n; i++) {
+      final a = clamp01(s.simplify * (0.35 + 0.65 * (1 - fe[i])));
+      k1.$1[i] = k1.$1[i] + (k2.$1[i] - k1.$1[i]) * a;
+      k1.$2[i] = k1.$2[i] + (k2.$2[i] - k1.$2[i]) * a;
+      k1.$3[i] = k1.$3[i] + (k2.$3[i] - k1.$3[i]) * a;
+      amount[i] = s.simplify * (0.4 + 0.6 * (1 - fe[i]));
+    }
+    valueMass(k1.$1, k1.$2, k1.$3, 6, amount);
+    r = k1.$1;
+    g = k1.$2;
+    b = k1.$3;
+  }
+  final lum = Float32List(n);
+  for (var i = 0; i < n; i++) {
+    lum[i] = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i];
   }
 
   final ctx = _Ctx(w, h, r, g, b, lum, paper);
-  final cmap = ColorMap(s.colorMode, r, g, b, rng);
   final spec = s.style.spec;
   final strokes = spec.isSketch
-      ? _sketch(ctx, spec, cmap, s, rng)
-      : _paint(ctx, spec, cmap, s, rng);
+      ? _sketch(ctx, spec, cmap, s, rng, fe)
+      : _paint(ctx, spec, cmap, s, rng, fe);
 
   return Painting(
     width: w,
     height: h,
     paperColor: s.paperColor,
     strokes: strokes,
+    focusX: fx / w,
+    focusY: fy / h,
   );
+}
+
+/// Focus weight map (1 = sharp, lower = looser) and the focal point in px.
+/// Automatic focus: where detail is highest, favouring skin tones and the
+/// upper-middle of the picture (where faces and subjects usually are).
+(Float32List, double, double) _focusMap(
+    Float32List r, Float32List g, Float32List b, int w, int h, PaintSettings s) {
+  final n = w * h;
+  final longSide = math.max(w, h).toDouble();
+  double fx, fy;
+  if (s.focusX != null && s.focusY != null) {
+    fx = s.focusX! * w;
+    fy = s.focusY! * h;
+  } else {
+    final lum = Float32List(n), skin = Float32List(n);
+    for (var i = 0; i < n; i++) {
+      final l = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i];
+      lum[i] = l;
+      final rg = r[i] - g[i];
+      skin[i] = (r[i] > g[i] && g[i] > b[i] && rg > 0.04 && rg < 0.3 && l > 0.3 && l < 0.9)
+          ? 1.0
+          : 0.0;
+    }
+    final (gx, gy) = sobel(gaussianBlur(lum, w, h, 1.0), w, h);
+    final skinB = gaussianBlur(skin, w, h, 2.0);
+    final det = Float32List(n);
+    for (var i = 0; i < n; i++) {
+      det[i] = math.sqrt(gx[i] * gx[i] + gy[i] * gy[i]) * (1 + 1.5 * skinB[i]);
+    }
+    final detB = gaussianBlur(det, w, h, longSide * 0.04);
+    final sig2 = 2 * (0.3 * longSide) * (0.3 * longSide);
+    var best = -1.0;
+    fx = w / 2;
+    fy = h * 0.38;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final dx = x - w / 2, dy = y - h * 0.38;
+        final v = detB[y * w + x] * math.exp(-(dx * dx + dy * dy) / sig2);
+        if (v > best) {
+          best = v;
+          fx = x.toDouble();
+          fy = y.toDouble();
+        }
+      }
+    }
+  }
+  final fe = Float32List(n);
+  final sig2 = 2 * (0.3 * longSide) * (0.3 * longSide);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final dx = x - fx, dy = y - fy;
+      final f = math.exp(-(dx * dx + dy * dy) / sig2);
+      fe[y * w + x] = 1 - s.focus * (1 - f);
+    }
+  }
+  return (fe, fx, fy);
 }
 
 // ---------------------------------------------------------------- shared
@@ -128,8 +209,20 @@ Float32List _flat(List<_P> pts) {
 
 // ---------------------------------------------------------------- painting
 
-List<BrushStroke> _paint(
-    _Ctx c, StyleSpec st, ColorMap cmap, PaintSettings s, math.Random rng) {
+double _smooth(double a, double b, double x) {
+  final t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+}
+
+class _Seed {
+  const _Seed(this.x, this.y, this.f);
+  final double x, y, f;
+}
+
+const _umber = [0.24, 0.15, 0.09];
+
+List<BrushStroke> _paint(_Ctx c, StyleSpec st, ColorMap cmap, PaintSettings s,
+    math.Random rng, Float32List fe) {
   final w = c.w, h = c.h, n = w * h;
   final longSide = math.max(w, h).toDouble();
   final strokes = <BrushStroke>[];
@@ -139,7 +232,87 @@ List<BrushStroke> _paint(
   final ink = cmap.mode == ColorMode.kleur ? const [0.10, 0.09, 0.09] : cmap.ink;
   final lumLo = percentile(c.lum, 0.03), lumHi = percentile(c.lum, 0.97);
   final flat = st.brush == BrushModel.flat;
+  final order = flat && st.paintOrder;
   final drift = _Noise2(rng, w, h, 5);
+  final refCol = [c.r, c.g, c.b];
+
+  /// Stroke colour from the reference colour; null = leave paper (charcoal).
+  List<double>? colour(List<double> base, double x, double y, double f) {
+    final m = (base[0] + base[1] + base[2]) / 3;
+    final vib = st.vibrance * s.vibrance * (0.8 + 0.2 * f);
+    var col3 = List<double>.generate(3, (k) => m + (base[k] - m) * vib);
+    final jit = st.jitter * s.colorJitter;
+    if (flat) {
+      // smooth warm/cool + value drift over the canvas
+      final d = drift.sample(x, y);
+      final dr = st.drift * s.colorJitter;
+      col3[0] += d[0] * dr + d[1] * dr * 0.5;
+      col3[1] += d[0] * 0.3 * dr + d[1] * dr * 0.5;
+      col3[2] += -d[0] * dr + d[1] * dr * 0.5;
+      // warm lights, cool shadows
+      final temp = st.temperature * s.temperature;
+      if (temp > 0) {
+        final k = (lumOf(col3) - 0.5) * temp * 2;
+        col3[0] += k;
+        col3[1] += 0.35 * k;
+        col3[2] -= 0.8 * k;
+      }
+      for (var k = 0; k < 3; k++) {
+        col3[k] = clamp01(col3[k] + _gauss(rng) * 0.02 * jit);
+      }
+    } else {
+      for (var k = 0; k < 3; k++) {
+        col3[k] += (rng.nextDouble() - 0.5) * 0.07 * jit;
+      }
+      final fm = 1 + (rng.nextDouble() - 0.5) * 0.14 * jit;
+      for (var k = 0; k < 3; k++) {
+        col3[k] = clamp01(col3[k] * fm);
+      }
+    }
+    if (st.mono) {
+      final t = math
+          .pow(clamp01((lumOf(col3) - lumLo) / (lumHi - lumLo + 1e-6)), 1.4)
+          .toDouble();
+      if (t > 0.8) return null; // leave the paper showing in highlights
+      col3 = List<double>.generate(3, (k) => ink[k] + (c.paper[k] - ink[k]) * t);
+    } else {
+      col3 = cmap(col3);
+    }
+    if (st.lighten > 0) {
+      col3 = List<double>.generate(
+          3, (k) => col3[k] + (c.paper[k] - col3[k]) * st.lighten);
+    }
+    return col3;
+  }
+
+  // --- underpainting: a loose umber block-in of the darks
+  if (st.underpainting && flat) {
+    final bw = longSide * 0.075 * s.brushSize;
+    final blk = [
+      gaussianBlur(c.r, w, h, bw * 0.5),
+      gaussianBlur(c.g, w, h, bw * 0.5),
+      gaussianBlur(c.b, w, h, bw * 0.5),
+    ];
+    final ang = _flow(c, bw);
+    final step = bw * 0.7;
+    for (var y = -rng.nextDouble() * step; y < h + step; y += step) {
+      for (var x = -rng.nextDouble() * step; x < w + step; x += step) {
+        final px = x + (rng.nextDouble() - 0.5) * step;
+        final py = y + (rng.nextDouble() - 0.5) * step;
+        final j = c.idx(px, py);
+        final base = [blk[0][j], blk[1][j], blk[2][j]];
+        final l = lumOf(base);
+        if (l >= 0.55) continue;
+        final t = math.pow(l / 0.55, 1.2).toDouble();
+        final col3 = List<double>.generate(
+            3, (k) => _umber[k] + (c.paper[k] - _umber[k]) * t);
+        final line =
+            _trace(c, px, py, base, blk, ang, bw, 2.5, rng, 0.5, stop: 0.2);
+        _flatStroke(line, bw, col3, rng, st, 1.0, -1, strokes,
+            impasto: 0, opacity: 0.6, streakContrast: 0.05, bodyEnd: (0.5, 0.75));
+      }
+    }
+  }
 
   for (var li = 0; li < st.layers.length; li++) {
     final layer = st.layers[li];
@@ -150,6 +323,14 @@ List<BrushStroke> _paint(
       gaussianBlur(c.g, w, h, bw * 0.3),
       gaussianBlur(c.b, w, h, bw * 0.3),
     ];
+    // softer reference for "lost" edges away from the focus
+    final soft = s.focus > 0
+        ? <Float32List>[
+            gaussianBlur(c.r, w, h, bw * 0.9),
+            gaussianBlur(c.g, w, h, bw * 0.9),
+            gaussianBlur(c.b, w, h, bw * 0.9),
+          ]
+        : col;
     final ang = _flow(c, bw);
 
     Float32List? err;
@@ -171,70 +352,55 @@ List<BrushStroke> _paint(
     }
     prev = col;
 
-    final thr = layer.threshold / s.detail;
     final step =
         bw * (st.spacing ?? (st.shape == StrokeShape.dot ? 0.6 : 0.55));
-    final seeds = <_P>[];
+    final seeds = <_Seed>[];
     for (var y = -rng.nextDouble() * step; y < h + step; y += step) {
       for (var x = -rng.nextDouble() * step; x < w + step; x += step) {
         final px = x + (rng.nextDouble() - 0.5) * step;
         final py = y + (rng.nextDouble() - 0.5) * step;
+        final f = fe[c.idx(px, py)];
         if (err == null || layer.threshold == 0) {
-          seeds.add(_P(px, py));
+          // loose areas: let the toned ground / underpainting peek through
+          if (st.underpainting &&
+              rng.nextDouble() < 0.6 * math.pow(1 - f, 1.5)) {
+            continue;
+          }
+          seeds.add(_Seed(px, py, f));
         } else {
+          // finer brushes only where it matters: near the focus
+          final gate = math.max(0.25, math.pow(f, 0.5 * li).toDouble());
+          final thr = layer.threshold / s.detail / gate;
           final e = err[c.idx(px, py)];
-          if (e > thr && rng.nextDouble() < 0.35 + e) seeds.add(_P(px, py));
+          if (e > thr && rng.nextDouble() < 0.35 + e) seeds.add(_Seed(px, py, f));
         }
       }
     }
     seeds.shuffle(rng);
+    if (order) {
+      // dark → light, like a painter (fat over lean)
+      final keys = <_Seed, double>{};
+      for (final sd in seeds) {
+        final j = c.idx(sd.x, sd.y);
+        keys[sd] = lumOf([col[0][j], col[1][j], col[2][j]]) +
+            _uniform(rng, -0.12, 0.12);
+      }
+      seeds.sort((a, b) => keys[a]!.compareTo(keys[b]!));
+    }
 
     final isLast = li == st.layers.length - 1;
     final opacity = li == 0 ? (st.baseOpacity ?? st.opacity) : st.opacity;
 
     for (final sd in seeds) {
       final j = c.idx(sd.x, sd.y);
-      final base = [col[0][j], col[1][j], col[2][j]];
+      final f = sd.f;
+      // lost edges away from the focus: softer colour, strokes cross edges
+      final lost = (1 - f) * 0.4;
+      final base = List<double>.generate(
+          3, (k) => col[k][j] + (soft[k][j] - col[k][j]) * lost);
       if (lumOf(base) > st.skipLight) continue;
-
-      // colour: vibrance + jitter, then the colour mode / charcoal tone
-      final m = (base[0] + base[1] + base[2]) / 3;
-      final vib = st.vibrance * s.vibrance;
-      var col3 = List<double>.generate(3, (k) => m + (base[k] - m) * vib);
-      final jit = st.jitter * s.colorJitter;
-      if (flat) {
-        // smooth warm/cool + value drift over the canvas, little noise
-        final d = drift.sample(sd.x, sd.y);
-        final dr = st.drift * s.colorJitter;
-        col3[0] += d[0] * dr + d[1] * dr * 0.5;
-        col3[1] += d[0] * 0.3 * dr + d[1] * dr * 0.5;
-        col3[2] += -d[0] * dr + d[1] * dr * 0.5;
-        for (var k = 0; k < 3; k++) {
-          col3[k] = clamp01(col3[k] + _gauss(rng) * 0.02 * jit);
-        }
-      } else {
-        for (var k = 0; k < 3; k++) {
-          col3[k] += (rng.nextDouble() - 0.5) * 0.07 * jit;
-        }
-        final f = 1 + (rng.nextDouble() - 0.5) * 0.14 * jit;
-        for (var k = 0; k < 3; k++) {
-          col3[k] = clamp01(col3[k] * f);
-        }
-      }
-      if (st.mono) {
-        final t = math
-            .pow(clamp01((lumOf(col3) - lumLo) / (lumHi - lumLo + 1e-6)), 1.4)
-            .toDouble();
-        if (t > 0.8) continue; // leave the paper showing in highlights
-        col3 = List<double>.generate(
-            3, (k) => ink[k] + (c.paper[k] - ink[k]) * t);
-      } else {
-        col3 = cmap(col3);
-      }
-      if (st.lighten > 0) {
-        col3 = List<double>.generate(
-            3, (k) => col3[k] + (c.paper[k] - col3[k]) * st.lighten);
-      }
+      final col3 = colour(base, sd.x, sd.y, f);
+      if (col3 == null) continue;
 
       if (st.shape == StrokeShape.dot) {
         final rad = bw * 0.45 * (0.8 + rng.nextDouble() * 0.4);
@@ -249,10 +415,16 @@ List<BrushStroke> _paint(
         continue;
       }
 
-      final line = _trace(c, sd.x, sd.y, base, col, ang, bw,
-          layer.length * s.strokeLength, rng, st.angleNoise);
+      final ww = flat ? bw * (1 + 0.2 * (1 - f)) : bw;
+      final line = _trace(c, sd.x, sd.y, base, col, ang, ww,
+          layer.length * s.strokeLength * (1 + 0.3 * (1 - f)), rng,
+          st.angleNoise,
+          stop: 0.12 * (1 + (1 - f)));
       if (flat) {
-        _flatStroke(line, bw, col3, rng, st, s.bristles, li, strokes);
+        final imp =
+            st.impasto * (order ? _smooth(0.35, 0.8, lumOf(col3)) : 1.0);
+        _flatStroke(line, ww, col3, rng, st, s.bristles, li, strokes,
+            impasto: imp);
         continue;
       }
       final poly = _outline(line, bw, rng, st.wobble, st.taperMin);
@@ -281,10 +453,7 @@ List<BrushStroke> _paint(
           final off = (rng.nextDouble() - 0.5) * 0.7 * bw;
           final sgn = k.isEven ? 1.0 : -1.0;
           final bf = 1 +
-              sgn *
-                  st.bristleContrast *
-                  (0.5 + rng.nextDouble()) *
-                  s.bristles;
+              sgn * st.bristleContrast * (0.5 + rng.nextDouble()) * s.bristles;
           strokes.add(BrushStroke(
             kind: StrokeKind.line,
             points: _offsetLine(line, off),
@@ -295,6 +464,50 @@ List<BrushStroke> _paint(
           ));
         }
       }
+    }
+  }
+
+  // --- final accents near the focus: brightest lights, deepest darks
+  if (st.accents && flat && !st.mono) {
+    final lum1 = gaussianBlur(c.lum, w, h, 1.0);
+    final loc = gaussianBlur(c.lum, w, h, longSide * 0.02);
+    final hi = <(double, int, int)>[], lo = <(double, int, int)>[];
+    final stp = math.max(2, (longSide * 0.008).toInt());
+    for (var y = 0; y < h; y += stp) {
+      for (var x = 0; x < w; x += stp) {
+        final i = y * w + x;
+        final f = fe[i];
+        if (f < 0.75) continue;
+        final d = lum1[i] - loc[i];
+        if (d > 0.15 && lum1[i] > 0.6) hi.add((d * f, x, y));
+        if (d < -0.1 && lum1[i] < 0.35) lo.add((-d * f, x, y));
+      }
+    }
+    hi.sort((a, b) => b.$1.compareTo(a.$1));
+    lo.sort((a, b) => b.$1.compareTo(a.$1));
+    final aw = longSide * 0.008 * s.brushSize;
+    final ang = _flow(c, aw * 2);
+    for (final (_, x, y) in hi.take(10)) {
+      final j = y * w + x;
+      final base = [c.r[j], c.g[j], c.b[j]];
+      final col3 = colour(base, x.toDouble(), y.toDouble(), 1.0);
+      if (col3 == null) continue;
+      final lit = List<double>.generate(3, (k) => clamp01(col3[k] + (1 - col3[k]) * 0.35));
+      final line = _trace(c, x.toDouble(), y.toDouble(), base, refCol, ang, aw,
+          3.0, rng, 0.2, stop: 0.2);
+      _flatStroke(line, aw, lit, rng, st, s.bristles, 99, strokes,
+          impasto: 1.4, minLength: 2.0);
+    }
+    for (final (_, x, y) in lo.take(6)) {
+      final j = y * w + x;
+      final base = [c.r[j], c.g[j], c.b[j]];
+      final col3 = colour(base, x.toDouble(), y.toDouble(), 1.0);
+      if (col3 == null) continue;
+      final dk = List<double>.generate(3, (k) => clamp01(col3[k] * 0.75));
+      final line = _trace(c, x.toDouble(), y.toDouble(), base, refCol, ang,
+          aw * 0.8, 2.0, rng, 0.2, stop: 0.15);
+      _flatStroke(line, aw * 0.8, dk, rng, st, s.bristles, 99, strokes,
+          impasto: 0, minLength: 1.4);
     }
   }
   return strokes;
@@ -310,8 +523,9 @@ List<_P> _trace(
   double bw,
   double maxLen,
   math.Random rng,
-  double angleNoise,
-) {
+  double angleNoise, {
+  double stop = 0.12,
+}) {
   final step = bw * 0.5;
   final half = math.max(1, (maxLen * bw / step / 2).toInt());
   final a0 = ang[c.idx(x, y)] + (rng.nextDouble() - 0.5) * angleNoise;
@@ -344,7 +558,7 @@ List<_P> _trace(
                 (col[1][j] - base[1]).abs() +
                 (col[2][j] - base[2]).abs()) /
             3.0;
-        if (diff > 0.12) break;
+        if (diff > stop) break;
       }
       cx = nx2;
       cy = ny2;
@@ -521,9 +735,18 @@ double _uniform(math.Random r, double a, double b) => a + (b - a) * r.nextDouble
 /// A flat-brush stroke: blunt head, solid body, dry fingered tail, faint
 /// broken bristle tracks and (optionally) impasto ridge highlight + shadow.
 void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
-    StyleSpec st, double bristleAmount, int layer, List<BrushStroke> out) {
+    StyleSpec st, double bristleAmount, int layer, List<BrushStroke> out,
+    {double? impasto,
+    double? opacity,
+    double? streakContrast,
+    (double, double)? bodyEnd,
+    double? minLength}) {
+  final impastoK = impasto ?? st.impasto;
+  final opacityK = opacity ?? st.opacity;
+  final streakK = streakContrast ?? st.streakContrast;
+  final bodyEndK = bodyEnd ?? st.bodyEnd;
   // minimum length: short stubs read as pixels
-  final minLen = st.minLength * w;
+  final minLen = (minLength ?? st.minLength) * w;
   final l0 = _polyLength(line);
   if (l0 < minLen) {
     final a = line.first, b = line.last;
@@ -566,7 +789,7 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
   }
 
   // --- body with a dry, fingered tail
-  final bodyEnd = _uniform(rng, st.bodyEnd.$1, st.bodyEnd.$2);
+  final bodyEnd = _uniform(rng, bodyEndK.$1, bodyEndK.$2);
   final m = math.max(3, (bodyEnd * (n - 1)).toInt() + 1);
   final wl = _smoothWobble(rng, m, st.wobble);
   final wr = _smoothWobble(rng, m, st.wobble);
@@ -610,7 +833,7 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
     points: _flat(body),
     width: 0,
     color: _rgb(c),
-    opacity: st.opacity,
+    opacity: opacityK,
     layer: layer,
   ));
 
@@ -624,7 +847,7 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
       final t0 = _uniform(rng, 0.02, 0.45);
       final t1 = math.min(0.98, t0 + _uniform(rng, 0.25, 0.7));
       final seg = [for (var q = 0; q < 6; q++) at(t0 + (t1 - t0) * q / 5, u)];
-      final v = _gauss(rng) * st.streakContrast * bristleAmount;
+      final v = _gauss(rng) * streakK * bristleAmount;
       out.add(BrushStroke(
         kind: StrokeKind.line,
         points: _flat(seg),
@@ -637,7 +860,7 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
   }
 
   // --- impasto: short broken ridge highlights + a soft shadow
-  if (st.impasto > 0 && w >= 7) {
+  if (impastoK > 0 && w >= 7) {
     const lx = -0.6, ly = -0.8; // light from top-left
     final mid = n ~/ 2;
     final side = nm[mid].x * lx + nm[mid].y * ly > 0 ? 1.0 : -1.0;
@@ -651,7 +874,7 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
         points: _flat([for (var r = 0; r < 5; r++) at(t0 + (t1 - t0) * r / 4, u)]),
         width: w * 0.06,
         color: _rgb(lighter(0.4)),
-        opacity: 0.38 * st.impasto,
+        opacity: math.min(1.0, 0.38 * impastoK),
         layer: layer,
       ));
     }
@@ -663,7 +886,7 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
           [for (var r = 0; r < 5; r++) at(t0 + (t1 - t0) * r / 4, -side * 0.8)]),
       width: w * 0.08,
       color: _rgb(darker(0.3)),
-      opacity: 0.22 * st.impasto,
+      opacity: math.min(1.0, 0.22 * impastoK),
       layer: layer,
     ));
   }
@@ -671,8 +894,8 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
 
 // ---------------------------------------------------------------- drawing
 
-List<BrushStroke> _sketch(
-    _Ctx c, StyleSpec st, ColorMap cmap, PaintSettings s, math.Random rng) {
+List<BrushStroke> _sketch(_Ctx c, StyleSpec st, ColorMap cmap,
+    PaintSettings s, math.Random rng, Float32List fe) {
   final w = c.w, h = c.h, n = w * h;
   final strokes = <BrushStroke>[];
   final darkPaper = lumOf(c.paper) < 0.4;
@@ -779,7 +1002,8 @@ List<BrushStroke> _sketch(
           final px = x + (rng.nextDouble() - 0.5) * step;
           final py = y + (rng.nextDouble() - 0.5) * step;
           final t = tone[c.idx(px, py)];
-          if (t > thr && rng.nextDouble() < (t - thr) * 2.2) {
+          final f = fe[c.idx(px, py)];
+          if (t > thr && rng.nextDouble() < (t - thr) * 2.2 * (0.6 + 0.4 * f)) {
             final a = baseA + (rng.nextDouble() - 0.5) * 0.25;
             final ln = (8 + rng.nextDouble() * 10) * sc * s.strokeLength;
             final ddx = math.cos(a) * ln / 2, ddy = math.sin(a) * ln / 2;
@@ -818,7 +1042,8 @@ List<BrushStroke> _sketch(
       final px = x + (rng.nextDouble() - 0.5) * cStep;
       final py = y + (rng.nextDouble() - 0.5) * cStep;
       final e = edge[c.idx(px, py)];
-      if (e > 0.35 && rng.nextDouble() < e) {
+      final f = fe[c.idx(px, py)];
+      if (e > 0.35 + 0.3 * (1 - f) && rng.nextDouble() < e) {
         final line = _traceEdge(c, px, py, ang, edge, sc, s.strokeLength);
         if (line.length >= 2) {
           addLine(line, contourWidth * sc * (0.7 + 0.5 * e), inkAt(px, py, 0.6),

@@ -16,12 +16,17 @@ String paintingToSvg(Painting p, {double outputScale = 2}) {
     ..writeln('<rect id="papier" width="${p.width}" height="${p.height}" '
         'fill="${_hex(p.paperColor)}"/>');
 
-  var currentLayer = -1;
+  var currentLayer = -1000;
+  var open = false;
   for (final s in p.strokes) {
     if (s.layer != currentLayer) {
-      if (currentLayer >= 0) b.writeln('</g>');
+      if (open) b.writeln('</g>');
+      open = true;
       currentLayer = s.layer;
-      b.writeln('<g id="laag-${currentLayer + 1}" '
+      final name = currentLayer < 0
+          ? 'onderschildering'
+          : (currentLayer >= 99 ? 'accenten' : 'laag-${currentLayer + 1}');
+      b.writeln('<g id="$name" '
           'stroke-linecap="round" stroke-linejoin="round">');
     }
     final pts = s.points;
@@ -61,7 +66,7 @@ String paintingToSvg(Painting p, {double outputScale = 2}) {
           'stroke-opacity="${s.opacity.toStringAsFixed(2)}"/>');
     }
   }
-  if (currentLayer >= 0) b.writeln('</g>');
+  if (open) b.writeln('</g>');
   b.writeln('</svg>');
   return b.toString();
 }

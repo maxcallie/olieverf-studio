@@ -76,3 +76,97 @@ double percentile(Float32List v, double p) {
   s.sort();
   return s[((s.length - 1) * p).round()];
 }
+
+/// Kuwahara filter: per pixel, the mean colour of the least-varying of its
+/// four (r+1)×(r+1) quadrants. Smooths texture but keeps edges sharp – the
+/// way a painter simplifies. O(n) thanks to summed-area tables.
+(Float32List, Float32List, Float32List) kuwahara(
+    Float32List r, Float32List g, Float32List b, int w, int h, int rad) {
+  final n = w * h;
+  if (rad < 1) {
+    return (Float32List.fromList(r), Float32List.fromList(g), Float32List.fromList(b));
+  }
+  final w1 = w + 1;
+  Float64List sat(double Function(int i) f) {
+    final s = Float64List(w1 * (h + 1));
+    for (var y = 0; y < h; y++) {
+      var row = 0.0;
+      for (var x = 0; x < w; x++) {
+        row += f(y * w + x);
+        s[(y + 1) * w1 + x + 1] = s[y * w1 + x + 1] + row;
+      }
+    }
+    return s;
+  }
+
+  final lum = Float32List(n);
+  for (var i = 0; i < n; i++) {
+    lum[i] = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i];
+  }
+  final sr = sat((i) => r[i]), sg = sat((i) => g[i]), sb = sat((i) => b[i]);
+  final sl = sat((i) => lum[i]), sl2 = sat((i) => lum[i] * lum[i]);
+  double box(Float64List s, int y0, int y1, int x0, int x1) =>
+      s[y1 * w1 + x1] - s[y0 * w1 + x1] - s[y1 * w1 + x0] + s[y0 * w1 + x0];
+  int cl(int v, int hi) => v < 0 ? 0 : (v > hi ? hi : v);
+
+  final or = Float32List(n), og = Float32List(n), ob = Float32List(n);
+  const quads = [
+    [-1, 0, -1, 0],
+    [-1, 0, 0, 1],
+    [0, 1, -1, 0],
+    [0, 1, 0, 1],
+  ];
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      var best = double.infinity;
+      for (final q in quads) {
+        // quadrant [y0, y1) × [x0, x1)
+        final y0 = cl(q[0] == -1 ? y - rad : y, h);
+        final y1 = cl(q[1] == 0 ? y + 1 : y + rad + 1, h);
+        final x0 = cl(q[2] == -1 ? x - rad : x, w);
+        final x1 = cl(q[3] == 0 ? x + 1 : x + rad + 1, w);
+        final area = ((y1 - y0) * (x1 - x0)).toDouble();
+        if (area <= 0) continue;
+        final ml = box(sl, y0, y1, x0, x1) / area;
+        final v = box(sl2, y0, y1, x0, x1) / area - ml * ml;
+        if (v < best) {
+          best = v;
+          final i = y * w + x;
+          or[i] = box(sr, y0, y1, x0, x1) / area;
+          og[i] = box(sg, y0, y1, x0, x1) / area;
+          ob[i] = box(sb, y0, y1, x0, x1) / area;
+        }
+      }
+    }
+  }
+  return (or, og, ob);
+}
+
+double _smoothstep(double a, double b, double x) {
+  var t = (x - a) / (b - a);
+  t = t < 0 ? 0.0 : (t > 1 ? 1.0 : t);
+  return t * t * (3 - 2 * t);
+}
+
+/// Groups luminance into a few soft value bands (keeps hue), in place.
+/// [amount] per pixel: 0 = untouched, 1 = fully banded.
+void valueMass(Float32List r, Float32List g, Float32List b, int levels,
+    Float32List amount) {
+  for (var i = 0; i < r.length; i++) {
+    final l = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i];
+    final t = l * levels;
+    final f = t.floorToDouble();
+    final q = (f + _smoothstep(0.3, 0.7, t - f)) / levels;
+    final ratio = (q + 0.02) / (l + 0.02);
+    final a = amount[i];
+    double mix(double v) {
+      var o = v * ratio;
+      o = o < 0 ? 0.0 : (o > 1 ? 1.0 : o);
+      return v + (o - v) * a;
+    }
+
+    r[i] = mix(r[i]);
+    g[i] = mix(g[i]);
+    b[i] = mix(b[i]);
+  }
+}

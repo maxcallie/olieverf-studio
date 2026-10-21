@@ -26,7 +26,11 @@ enum ColorMode {
   zwartwit('Zwart-wit'),
   sepia('Sepia'),
   cyanotypie('Cyanotypie'),
-  palet('Beperkt palet');
+  palet('Beperkt palet'),
+  zorn('Zorn'),
+  impressionist('Impressionistisch'),
+  aarde('Aardetinten'),
+  nocturne('Nocturne');
 
   const ColorMode(this.label);
   final String label;
@@ -96,6 +100,10 @@ class StyleSpec {
     this.streakContrast = 0.09,
     this.impasto = 1.0,
     this.drift = 0.06,
+    this.temperature = 0.0,
+    this.underpainting = false,
+    this.paintOrder = false,
+    this.accents = false,
   });
 
   final StyleKind kind;
@@ -169,6 +177,19 @@ class StyleSpec {
   /// Smooth warm/cool + value drift over the canvas.
   final double drift;
 
+  // ---- artist decisions ----
+  /// Warm lights / cool shadows shift.
+  final double temperature;
+
+  /// Loose umber block-in first; loose areas let the toned ground show.
+  final bool underpainting;
+
+  /// Dark → light within each layer; impasto only on the lights.
+  final bool paintOrder;
+
+  /// A few final highlights / darkest darks near the focus.
+  final bool accents;
+
   bool get isSketch => kind == StyleKind.sketch;
 }
 
@@ -186,6 +207,11 @@ const Map<PaintStyle, StyleSpec> styleSpecs = {
     wobble: 0.05,
     jitter: 0.5,
     vibrance: 1.25,
+    temperature: 0.12,
+    underpainting: true,
+    paintOrder: true,
+    accents: true,
+    paper: 0xA86A45,
   ),
   PaintStyle.oliepastel: StyleSpec(
     brush: BrushModel.flat,
@@ -209,6 +235,9 @@ const Map<PaintStyle, StyleSpec> styleSpecs = {
     streakContrast: 0.15,
     impasto: 0.5,
     drift: 0.08,
+    temperature: 0.12,
+    paintOrder: true,
+    accents: true,
   ),
   PaintStyle.impressionisme: StyleSpec(
     brush: BrushModel.flat,
@@ -231,6 +260,10 @@ const Map<PaintStyle, StyleSpec> styleSpecs = {
     streakContrast: 0.06,
     impasto: 0.6,
     drift: 0.12,
+    temperature: 0.12,
+    paintOrder: true,
+    accents: true,
+    paper: 0xFAF8F3,
   ),
   PaintStyle.aquarel: StyleSpec(
     layers: [

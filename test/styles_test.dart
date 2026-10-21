@@ -54,6 +54,21 @@ void main() {
     }
   }
 
+  test('focus point is respected and reported', () {
+    final p = paintPhoto(
+        photo, const PaintSettings(focusX: 0.25, focusY: 0.75));
+    expect(p.focusX, closeTo(0.25, 0.01));
+    expect(p.focusY, closeTo(0.75, 0.01));
+    final auto = paintPhoto(photo, const PaintSettings());
+    expect(auto.focusX, inInclusiveRange(0, 1));
+  });
+
+  test('artist features off still paints', () {
+    final p = paintPhoto(
+        photo, const PaintSettings(focus: 0, simplify: 0, temperature: 0));
+    expect(p.strokes, isNotEmpty);
+  });
+
   test('dark paper flips pencil to light ink', () {
     final p = paintPhoto(
         photo,
@@ -76,6 +91,10 @@ void main() {
       (PaintStyle.olieverf, ColorMode.palet),
       (PaintStyle.potlood, ColorMode.zwartwit),
       (PaintStyle.pen, ColorMode.sepia),
+      (PaintStyle.olieverf, ColorMode.zorn),
+      (PaintStyle.olieverf, ColorMode.impressionist),
+      (PaintStyle.olieverf, ColorMode.aarde),
+      (PaintStyle.olieverf, ColorMode.nocturne),
     ];
     for (final (style, mode) in combos) {
       final p = paintPhoto(
@@ -89,5 +108,23 @@ void main() {
       File('$out/${style.name}_${mode.name}.svg')
           .writeAsStringSync(paintingToSvg(p, outputScale: 1));
     }
+    final plain = paintPhoto(
+      big,
+      PaintSettings(
+          workSize: 500,
+          focus: 0,
+          simplify: 0,
+          temperature: 0,
+          paperColor: 0xECE4D4),
+    );
+    File('$out/olieverf_zonder_kunstenaar.svg')
+        .writeAsStringSync(paintingToSvg(plain, outputScale: 1));
+    final tapped = paintPhoto(
+      big,
+      PaintSettings(
+          workSize: 500, focusX: 0.62, focusY: 0.42, paperColor: 0xA86A45),
+    );
+    File('$out/olieverf_focus_rechteroog.svg')
+        .writeAsStringSync(paintingToSvg(tapped, outputScale: 1));
   }, skip: out == null ? 'GALLERY_OUT not set' : false);
 }

@@ -45,10 +45,16 @@ class Painting {
     required this.height,
     required this.paperColor,
     required this.strokes,
+    this.focusX = 0.5,
+    this.focusY = 0.5,
   });
 
   final int width;
   final int height;
+
+  /// Focal point that was used (0..1, relative to width/height).
+  final double focusX;
+  final double focusY;
 
   /// 0xRRGGBB
   final int paperColor;
@@ -75,7 +81,12 @@ class PaintSettings {
     this.colorJitter = 1.0,
     this.bristles = 1.0,
     this.seed = 7,
-    this.paperColor = 0xECE4D4,
+    this.paperColor = 0xA86A45,
+    this.focus = 0.7,
+    this.simplify = 0.6,
+    this.temperature = 1.0,
+    this.focusX,
+    this.focusY,
   });
 
   final PaintStyle style;
@@ -105,6 +116,20 @@ class PaintSettings {
   final int seed;
   final int paperColor;
 
+  /// How strongly detail and sharpness concentrate around the focal point
+  /// (0 = everything equally detailed).
+  final double focus;
+
+  /// Simplify the photo into masses of light/mid/dark before painting.
+  final double simplify;
+
+  /// Multiplier on the style's warm-light / cool-shadow shift.
+  final double temperature;
+
+  /// Focal point chosen by the user (0..1); null = automatic.
+  final double? focusX;
+  final double? focusY;
+
   PaintSettings copyWith({
     PaintStyle? style,
     ColorMode? colorMode,
@@ -117,6 +142,12 @@ class PaintSettings {
     double? bristles,
     int? seed,
     int? paperColor,
+    double? focus,
+    double? simplify,
+    double? temperature,
+    double? focusX,
+    double? focusY,
+    bool clearFocusPoint = false,
   }) {
     return PaintSettings(
       style: style ?? this.style,
@@ -130,6 +161,11 @@ class PaintSettings {
       bristles: bristles ?? this.bristles,
       seed: seed ?? this.seed,
       paperColor: paperColor ?? this.paperColor,
+      focus: focus ?? this.focus,
+      simplify: simplify ?? this.simplify,
+      temperature: temperature ?? this.temperature,
+      focusX: clearFocusPoint ? null : (focusX ?? this.focusX),
+      focusY: clearFocusPoint ? null : (focusY ?? this.focusY),
     );
   }
 }
