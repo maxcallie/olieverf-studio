@@ -32,6 +32,9 @@ jobs:
         continue-on-error: true
       - name: Tests
         run: ci/annotate.sh Tests flutter test
+      - name: Stijlgalerij (SVG per stijl)
+        continue-on-error: true
+        run: GALLERY_OUT=ci-out/galerij flutter test test/styles_test.dart --plain-name gallery
       - name: Web build
         run: ci/annotate.sh Build flutter build web --release --base-href "/${{ github.event.repository.name }}/"
 

@@ -57,6 +57,23 @@ Per streek varieert de kleur een beetje (vibrance + jitter). Dat geeft de pastel
 | `painter/image_loader.dart` | foto decoderen + verkleinen |
 | `main.dart` | UI |
 
+## Stijlen en kleurmodi
+
+| Stijl | Hoe |
+|---|---|
+| Olieverf | lange, gladde streken langs de vormen |
+| Oliepastel | korte krijterige toetsen met penseelharen |
+| Impressionisme | losse toetsen, meer kleurvariatie |
+| Aquarel | transparante washes, wit papier, randjes op de fijnste laag |
+| Pointillisme | alleen stippen (`<circle>` in de SVG) |
+| Houtskool | monochroom, lichte delen blijven papier |
+| Potlood | arceringen op toon + contourlijnen langs randen |
+| Pen & inkt | kruisarcering in 4 richtingen + contouren (ideaal voor pen-plotters) |
+
+Kleurmodi: **Kleur**, **Zwart-wit**, **Sepia**, **Cyanotypie** en **Beperkt palet** (k-means, 8 kleuren uit de foto). Bij potlood/pen geeft *Kleur* een kleurpotlood-effect. Op zwart papier tekenen ze met witte lijnen.
+
+Alle instellingen per stijl staan in `lib/painter/styles.dart`.
+
 ## Instellingen in de app
 
 | Schuif | Effect |

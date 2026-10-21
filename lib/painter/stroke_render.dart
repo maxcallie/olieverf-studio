@@ -7,13 +7,20 @@ import 'models.dart';
 
 /// Builds the same geometry that the SVG exporter writes:
 /// closed polygons are smoothed with quadratic curves through the mid-points
-/// of their edges; bristles are plain polylines.
+/// of their edges (fill + outline); lines are plain polylines; dots circles.
 Path strokePath(BrushStroke s) {
   final p = s.points;
   final n = s.pointCount;
   final path = Path();
+  if (s.kind == StrokeKind.dot) {
+    if (n >= 1) {
+      path.addOval(Rect.fromCircle(
+          center: Offset(p[0], p[1]), radius: s.width / 2));
+    }
+    return path;
+  }
   if (n < 2) return path;
-  if (s.kind == StrokeKind.fill) {
+  if (s.kind == StrokeKind.fill || s.kind == StrokeKind.outline) {
     path.moveTo((p[2 * (n - 1)] + p[0]) / 2, (p[2 * (n - 1) + 1] + p[1]) / 2);
     for (var i = 0; i < n; i++) {
       final j = (i + 1) % n;
@@ -59,7 +66,12 @@ void drawStrokes(Canvas canvas, Painting painting, int from, int to) {
   final strokes = painting.strokes;
   for (var i = from; i < to && i < strokes.length; i++) {
     final s = strokes[i];
-    if (s.kind == StrokeKind.fill) {
+    if (s.kind == StrokeKind.dot) {
+      if (s.pointCount < 1) continue;
+      fill.color = _color(s.color, s.opacity);
+      canvas.drawCircle(
+          Offset(s.points[0], s.points[1]), s.width / 2, fill);
+    } else if (s.kind == StrokeKind.fill) {
       fill.color = _color(s.color, s.opacity);
       canvas.drawPath(strokePath(s), fill);
     } else {

@@ -2,7 +2,7 @@ import 'models.dart';
 
 /// Writes the painting as an SVG file.
 ///
-/// Each brush stroke becomes one `<path>`; strokes are grouped per layer
+/// Each brush stroke becomes one `<path>` (dots: `<circle>`); grouped per layer
 /// (`laag-1` = coarsest brush) so you can toggle or recolour them in
 /// Illustrator, Inkscape, Figma, etc. The geometry is identical to what the
 /// app draws on screen (see `strokePath`).
@@ -26,8 +26,15 @@ String paintingToSvg(Painting p, {double outputScale = 2}) {
     }
     final pts = s.points;
     final n = s.pointCount;
+    if (s.kind == StrokeKind.dot) {
+      if (n < 1) continue;
+      b.writeln('<circle cx="${_f(pts[0])}" cy="${_f(pts[1])}" '
+          'r="${_f(s.width / 2)}" fill="${_hex(s.color)}" '
+          'fill-opacity="${s.opacity.toStringAsFixed(2)}"/>');
+      continue;
+    }
     if (n < 2) continue;
-    if (s.kind == StrokeKind.fill) {
+    if (s.kind == StrokeKind.fill || s.kind == StrokeKind.outline) {
       b.write('<path d="M${_f((pts[2 * (n - 1)] + pts[0]) / 2)} '
           '${_f((pts[2 * (n - 1) + 1] + pts[1]) / 2)}');
       for (var i = 0; i < n; i++) {
@@ -36,8 +43,14 @@ String paintingToSvg(Painting p, {double outputScale = 2}) {
             '${_f((pts[2 * i] + pts[2 * j]) / 2)} '
             '${_f((pts[2 * i + 1] + pts[2 * j + 1]) / 2)}');
       }
-      b.writeln('Z" fill="${_hex(s.color)}" '
-          'fill-opacity="${s.opacity.toStringAsFixed(2)}"/>');
+      if (s.kind == StrokeKind.fill) {
+        b.writeln('Z" fill="${_hex(s.color)}" '
+            'fill-opacity="${s.opacity.toStringAsFixed(2)}"/>');
+      } else {
+        b.writeln('Z" fill="none" stroke="${_hex(s.color)}" '
+            'stroke-width="${_f(s.width)}" '
+            'stroke-opacity="${s.opacity.toStringAsFixed(2)}"/>');
+      }
     } else {
       b.write('<path d="M${_f(pts[0])} ${_f(pts[1])}');
       for (var i = 1; i < n; i++) {

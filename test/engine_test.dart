@@ -48,6 +48,7 @@ void main() {
     expect(svg, startsWith('<?xml'));
     expect(svg, contains('viewBox="0 0 100 80"'));
     expect(svg.trim(), endsWith('</svg>'));
-    expect('<path'.allMatches(svg).length, p.strokes.length);
+    expect('<path'.allMatches(svg).length + '<circle'.allMatches(svg).length,
+        p.strokes.length);
   });
 }

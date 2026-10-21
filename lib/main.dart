@@ -385,18 +385,48 @@ class _StudioPageState extends State<StudioPage> {
               onSelectionChanged: (v) => setState(() => _showOriginal = v.first),
             ),
           ],
+          const SizedBox(height: 16),
+          Text('Stijl', style: theme.textTheme.labelLarge),
           const SizedBox(height: 8),
-          _slider('Penseelgrootte', s.brushSize, 0.5, 2.0,
-              (v) => s.copyWith(brushSize: v)),
-          _slider('Detail', s.detail, 0.5, 2.5, (v) => s.copyWith(detail: v)),
-          _slider('Streeklengte', s.strokeLength, 0.4, 2.0,
-              (v) => s.copyWith(strokeLength: v)),
-          _slider('Kleurintensiteit', s.vibrance, 0.7, 2.0,
-              (v) => s.copyWith(vibrance: v)),
-          _slider('Kleurvariatie', s.colorJitter, 0.0, 2.5,
-              (v) => s.copyWith(colorJitter: v)),
-          _slider('Penseelharen', s.bristles, 0.0, 2.0,
-              (v) => s.copyWith(bristles: v)),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (final st in PaintStyle.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    avatar: Icon(_styleIcon(st), size: 18),
+                    label: Text(st.label),
+                    tooltip: st.description,
+                    selected: s.style == st,
+                    onSelected: (_) => _setStyle(st),
+                  ),
+                ),
+            ]),
+          ),
+          const SizedBox(height: 4),
+          Text(s.style.description, style: theme.textTheme.bodySmall),
+          const SizedBox(height: 12),
+          Text('Kleur', style: theme.textTheme.labelLarge),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (final cm in ColorMode.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    avatar: _ModeSwatch(mode: cm),
+                    label: Text(cm.label),
+                    selected: s.colorMode == cm,
+                    onSelected: (_) =>
+                        _update(s.copyWith(colorMode: cm), rerender: true),
+                  ),
+                ),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          ..._sliders(s),
           const SizedBox(height: 8),
           Text('Ondergrond', style: theme.textTheme.labelLarge),
           const SizedBox(height: 8),
@@ -418,7 +448,9 @@ class _StudioPageState extends State<StudioPage> {
           ),
           if (_painting != null) ...[
             const Divider(height: 24),
-            Text('${_painting!.strokes.length} penseelstreken',
+            Text(
+                '${_painting!.strokes.length} '
+                '${s.style.spec.isSketch ? 'lijnen' : 'penseelstreken'}',
                 style: theme.textTheme.bodySmall),
             const SizedBox(height: 12),
             Row(children: [
@@ -449,6 +481,54 @@ class _StudioPageState extends State<StudioPage> {
     );
   }
 
+  void _setStyle(PaintStyle st) {
+    if (st == _settings.style) return;
+    _update(_settings.copyWith(style: st, paperColor: st.spec.paper),
+        rerender: true);
+  }
+
+  static IconData _styleIcon(PaintStyle st) => switch (st) {
+        PaintStyle.olieverf => Icons.brush,
+        PaintStyle.oliepastel => Icons.gesture,
+        PaintStyle.impressionisme => Icons.blur_on,
+        PaintStyle.aquarel => Icons.water_drop_outlined,
+        PaintStyle.pointillisme => Icons.grain,
+        PaintStyle.houtskool => Icons.whatshot_outlined,
+        PaintStyle.potlood => Icons.edit_outlined,
+        PaintStyle.pen => Icons.border_color_outlined,
+      };
+
+  /// Only the sliders that do something for the current style.
+  List<Widget> _sliders(PaintSettings s) {
+    final spec = s.style.spec;
+    if (spec.isSketch) {
+      return [
+        _slider('Lijndikte', s.brushSize, 0.5, 2.0,
+            (v) => s.copyWith(brushSize: v)),
+        _slider('Dichtheid', s.detail, 0.5, 2.5, (v) => s.copyWith(detail: v)),
+        _slider('Lijnlengte', s.strokeLength, 0.4, 2.0,
+            (v) => s.copyWith(strokeLength: v)),
+      ];
+    }
+    final dots = spec.shape == StrokeShape.dot;
+    return [
+      _slider(dots ? 'Stipgrootte' : 'Penseelgrootte', s.brushSize, 0.5, 2.0,
+          (v) => s.copyWith(brushSize: v)),
+      _slider('Detail', s.detail, 0.5, 2.5, (v) => s.copyWith(detail: v)),
+      if (!dots)
+        _slider('Streeklengte', s.strokeLength, 0.4, 2.0,
+            (v) => s.copyWith(strokeLength: v)),
+      if (!spec.mono && s.colorMode == ColorMode.kleur)
+        _slider('Kleurintensiteit', s.vibrance, 0.5, 1.6,
+            (v) => s.copyWith(vibrance: v)),
+      _slider('Kleurvariatie', s.colorJitter, 0.0, 2.5,
+          (v) => s.copyWith(colorJitter: v)),
+      if (spec.bristles > 0)
+        _slider('Penseelharen', s.bristles, 0.0, 2.0,
+            (v) => s.copyWith(bristles: v)),
+    ];
+  }
+
   Widget _slider(String label, double value, double min, double max,
       PaintSettings Function(double) apply) {
     final theme = Theme.of(context);
@@ -474,6 +554,30 @@ class _StudioPageState extends State<StudioPage> {
               textAlign: TextAlign.right, style: theme.textTheme.labelSmall),
         ),
       ]),
+    );
+  }
+}
+
+class _ModeSwatch extends StatelessWidget {
+  const _ModeSwatch({required this.mode});
+  final ColorMode mode;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = switch (mode) {
+      ColorMode.kleur => const [Color(0xFFD9502B), Color(0xFF3C8D5A), Color(0xFF3F6FD1)],
+      ColorMode.zwartwit => const [Color(0xFF111111), Color(0xFF888888), Color(0xFFEEEEEE)],
+      ColorMode.sepia => const [Color(0xFF3D2410), Color(0xFF9C7A55), Color(0xFFF5E8CA)],
+      ColorMode.cyanotypie => const [Color(0xFF0A2463), Color(0xFF4A78B5), Color(0xFFE0EEFF)],
+      ColorMode.palet => const [Color(0xFFE07A5F), Color(0xFF81B29A), Color(0xFFF2CC8F)],
+    };
+    return Container(
+      width: 18,
+      height: 18,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: SweepGradient(colors: [...colors, colors.first]),
+      ),
     );
   }
 }

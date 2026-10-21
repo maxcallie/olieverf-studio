@@ -1,8 +1,15 @@
 import 'dart:typed_data';
 
-/// A filled brush stroke (closed polygon, drawn with smooth quadratic curves)
-/// or a thin "bristle" line (open polyline, drawn with a stroke width).
-enum StrokeKind { fill, line }
+import 'styles.dart';
+
+export 'styles.dart';
+
+/// How a stroke is drawn (on screen and in the SVG):
+/// * [fill]    closed polygon, smoothed with quadratic curves
+/// * [outline] same smoothed polygon, but only its edge is stroked
+/// * [line]    open polyline with a stroke width
+/// * [dot]     circle; `points` = [cx, cy], `width` = diameter
+enum StrokeKind { fill, outline, line, dot }
 
 class BrushStroke {
   const BrushStroke({
@@ -19,14 +26,14 @@ class BrushStroke {
   /// Interleaved coordinates: x0, y0, x1, y1, ... in painting space.
   final Float32List points;
 
-  /// Line width; only used for [StrokeKind.line].
+  /// Line width ([line]/[outline]) or diameter ([dot]).
   final double width;
 
   /// 0xRRGGBB
   final int color;
   final double opacity;
 
-  /// Which pass (0 = coarsest brush) produced this stroke.
+  /// Which pass produced this stroke (0 = first/coarsest).
   final int layer;
 
   int get pointCount => points.length ~/ 2;
@@ -58,21 +65,26 @@ class SourceImage {
 
 class PaintSettings {
   const PaintSettings({
+    this.style = PaintStyle.olieverf,
+    this.colorMode = ColorMode.kleur,
     this.workSize = 700,
     this.brushSize = 1.0,
     this.detail = 1.0,
     this.strokeLength = 1.0,
-    this.vibrance = 1.3,
+    this.vibrance = 1.0,
     this.colorJitter = 1.0,
     this.bristles = 1.0,
     this.seed = 7,
     this.paperColor = 0xECE4D4,
   });
 
+  final PaintStyle style;
+  final ColorMode colorMode;
+
   /// Long side (in px) of the image the engine analyses.
   final int workSize;
 
-  /// Multiplier for every brush width.
+  /// Multiplier for every brush width / line thickness.
   final double brushSize;
 
   /// Higher = more fine strokes on details.
@@ -81,19 +93,21 @@ class PaintSettings {
   /// Multiplier for maximum stroke length.
   final double strokeLength;
 
-  /// Colour saturation boost (1 = as photo).
+  /// Multiplier on the style's own colour saturation boost.
   final double vibrance;
 
-  /// Random colour variation per stroke.
+  /// Multiplier on the style's random colour variation.
   final double colorJitter;
 
-  /// Strength of the light/dark bristle lines inside strokes (0 = off).
+  /// Multiplier on the style's bristle lines (0 = off).
   final double bristles;
 
   final int seed;
   final int paperColor;
 
   PaintSettings copyWith({
+    PaintStyle? style,
+    ColorMode? colorMode,
     int? workSize,
     double? brushSize,
     double? detail,
@@ -105,6 +119,8 @@ class PaintSettings {
     int? paperColor,
   }) {
     return PaintSettings(
+      style: style ?? this.style,
+      colorMode: colorMode ?? this.colorMode,
       workSize: workSize ?? this.workSize,
       brushSize: brushSize ?? this.brushSize,
       detail: detail ?? this.detail,
