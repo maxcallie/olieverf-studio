@@ -138,6 +138,8 @@ List<BrushStroke> _paint(
   // charcoal: tone range of the photo + ink colour
   final ink = cmap.mode == ColorMode.kleur ? const [0.10, 0.09, 0.09] : cmap.ink;
   final lumLo = percentile(c.lum, 0.03), lumHi = percentile(c.lum, 0.97);
+  final flat = st.brush == BrushModel.flat;
+  final drift = _Noise2(rng, w, h, 5);
 
   for (var li = 0; li < st.layers.length; li++) {
     final layer = st.layers[li];
@@ -200,12 +202,24 @@ List<BrushStroke> _paint(
       final vib = st.vibrance * s.vibrance;
       var col3 = List<double>.generate(3, (k) => m + (base[k] - m) * vib);
       final jit = st.jitter * s.colorJitter;
-      for (var k = 0; k < 3; k++) {
-        col3[k] += (rng.nextDouble() - 0.5) * 0.07 * jit;
-      }
-      final f = 1 + (rng.nextDouble() - 0.5) * 0.14 * jit;
-      for (var k = 0; k < 3; k++) {
-        col3[k] = clamp01(col3[k] * f);
+      if (flat) {
+        // smooth warm/cool + value drift over the canvas, little noise
+        final d = drift.sample(sd.x, sd.y);
+        final dr = st.drift * s.colorJitter;
+        col3[0] += d[0] * dr + d[1] * dr * 0.5;
+        col3[1] += d[0] * 0.3 * dr + d[1] * dr * 0.5;
+        col3[2] += -d[0] * dr + d[1] * dr * 0.5;
+        for (var k = 0; k < 3; k++) {
+          col3[k] = clamp01(col3[k] + _gauss(rng) * 0.02 * jit);
+        }
+      } else {
+        for (var k = 0; k < 3; k++) {
+          col3[k] += (rng.nextDouble() - 0.5) * 0.07 * jit;
+        }
+        final f = 1 + (rng.nextDouble() - 0.5) * 0.14 * jit;
+        for (var k = 0; k < 3; k++) {
+          col3[k] = clamp01(col3[k] * f);
+        }
       }
       if (st.mono) {
         final t = math
@@ -237,6 +251,10 @@ List<BrushStroke> _paint(
 
       final line = _trace(c, sd.x, sd.y, base, col, ang, bw,
           layer.length * s.strokeLength, rng, st.angleNoise);
+      if (flat) {
+        _flatStroke(line, bw, col3, rng, st, s.bristles, li, strokes);
+        continue;
+      }
       final poly = _outline(line, bw, rng, st.wobble, st.taperMin);
       strokes.add(BrushStroke(
         kind: StrokeKind.fill,
@@ -401,6 +419,254 @@ Float32List _outline(
   final tip1 = _P(p[n - 1].x + nm[n - 1].y * k, p[n - 1].y - nm[n - 1].x * k);
 
   return _flat(<_P>[tip0, ...left, tip1, ...right.reversed]);
+}
+
+// ---------------------------------------------------------------- flat brush
+
+double _gauss(math.Random r) {
+  final u1 = 1.0 - r.nextDouble();
+  final u2 = r.nextDouble();
+  return math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2);
+}
+
+/// Smooth value noise on a coarse grid (smoothstep-bilinear), 3 channels.
+class _Noise2 {
+  _Noise2(math.Random rng, this.w, this.h, int cells)
+      : gw = cells + 2,
+        gh = math.max(2, (cells * h / w).round()) + 2 {
+    v = List.generate(gh * gw * 3, (_) => rng.nextDouble() * 2 - 1);
+  }
+
+  final int w, h, gw, gh;
+  late final List<double> v;
+
+  List<double> sample(double x, double y) {
+    final gx = clamp01(x / w) * (gw - 2);
+    final gy = clamp01(y / h) * (gh - 2);
+    final i = gx.toInt(), j = gy.toInt();
+    var fx = gx - i, fy = gy - j;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    double at(int jj, int ii, int k) => v[(jj * gw + ii) * 3 + k];
+    return List<double>.generate(3, (k) {
+      final top = at(j, i, k) * (1 - fx) + at(j, i + 1, k) * fx;
+      final bot = at(j + 1, i, k) * (1 - fx) + at(j + 1, i + 1, k) * fx;
+      return top * (1 - fy) + bot * fy;
+    });
+  }
+}
+
+/// One Chaikin corner-cutting pass (keeps the end points).
+List<_P> _chaikin(List<_P> p) {
+  if (p.length < 3) return p;
+  final q = <_P>[p.first];
+  for (var i = 0; i < p.length - 1; i++) {
+    final a = p[i], b = p[i + 1];
+    q.add(_P(0.75 * a.x + 0.25 * b.x, 0.75 * a.y + 0.25 * b.y));
+    q.add(_P(0.25 * a.x + 0.75 * b.x, 0.25 * a.y + 0.75 * b.y));
+  }
+  q.add(p.last);
+  return q;
+}
+
+double _polyLength(List<_P> p) {
+  var total = 0.0;
+  for (var i = 1; i < p.length; i++) {
+    final dx = p[i].x - p[i - 1].x, dy = p[i].y - p[i - 1].y;
+    total += math.sqrt(dx * dx + dy * dy);
+  }
+  return total;
+}
+
+/// n points evenly spaced along the polyline.
+List<_P> _resample(List<_P> p, int n) {
+  final cum = List<double>.filled(p.length, 0);
+  for (var i = 1; i < p.length; i++) {
+    final dx = p[i].x - p[i - 1].x, dy = p[i].y - p[i - 1].y;
+    cum[i] = cum[i - 1] + math.sqrt(dx * dx + dy * dy);
+  }
+  final total = cum.last == 0 ? 1e-6 : cum.last;
+  final out = <_P>[];
+  var j = 0;
+  for (var i = 0; i < n; i++) {
+    final s = total * i / (n - 1);
+    while (j < p.length - 2 && cum[j + 1] < s) {
+      j++;
+    }
+    var seg = cum[j + 1] - cum[j];
+    if (seg == 0) seg = 1e-6;
+    final t = (s - cum[j]) / seg;
+    out.add(_P(p[j].x + (p[j + 1].x - p[j].x) * t,
+        p[j].y + (p[j + 1].y - p[j].y) * t));
+  }
+  return out;
+}
+
+/// Smooth random width profile (two sines) instead of per-vertex noise.
+List<double> _smoothWobble(math.Random rng, int n, double amp) {
+  final f1 = 0.6 + rng.nextDouble(), f2 = 2.0 + rng.nextDouble() * 1.5;
+  final p1 = rng.nextDouble() * 6.3, p2 = rng.nextDouble() * 6.3;
+  final d = math.max(1, n - 1);
+  return List<double>.generate(
+      n,
+      (i) =>
+          1 +
+          amp *
+              (0.65 * math.sin(f1 * math.pi * i / d * 2 + p1) +
+                  0.35 * math.sin(f2 * math.pi * i / d * 2 + p2)));
+}
+
+double _uniform(math.Random r, double a, double b) => a + (b - a) * r.nextDouble();
+
+/// A flat-brush stroke: blunt head, solid body, dry fingered tail, faint
+/// broken bristle tracks and (optionally) impasto ridge highlight + shadow.
+void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
+    StyleSpec st, double bristleAmount, int layer, List<BrushStroke> out) {
+  // minimum length: short stubs read as pixels
+  final minLen = st.minLength * w;
+  final l0 = _polyLength(line);
+  if (l0 < minLen) {
+    final a = line.first, b = line.last;
+    var dx = b.x - a.x, dy = b.y - a.y;
+    final d = math.sqrt(dx * dx + dy * dy);
+    if (d < 1e-6) {
+      final ang = rng.nextDouble() * math.pi;
+      dx = math.cos(ang);
+      dy = math.sin(ang);
+    } else {
+      dx /= d;
+      dy /= d;
+    }
+    final ext = (minLen - l0) / 2;
+    line = [_P(a.x - dx * ext, a.y - dy * ext), ...line,
+      _P(b.x + dx * ext, b.y + dy * ext)];
+  }
+  line = _chaikin(line);
+  final length = _polyLength(line);
+  final n = math.max(6, math.min(32, (length / (w * 0.25)).toInt() + 2));
+  final pts = _resample(line, n);
+  final nm = _normals(pts);
+  final half = w * 0.5;
+
+  List<double> lighter(double f) =>
+      List<double>.generate(3, (k) => clamp01(c[k] + (1 - c[k]) * f));
+  List<double> darker(double f) =>
+      List<double>.generate(3, (k) => clamp01(c[k] * (1 - f)));
+
+  // point at fraction t along the stroke, lateral u in [-1, 1] × half width
+  _P at(double t, double u) {
+    final f = (t < 0 ? 0.0 : (t > 1 ? 1.0 : t)) * (n - 1);
+    final i = math.min(f.toInt(), n - 2);
+    final a = f - i;
+    final x = pts[i].x * (1 - a) + pts[i + 1].x * a;
+    final y = pts[i].y * (1 - a) + pts[i + 1].y * a;
+    final nx = nm[i].x * (1 - a) + nm[i + 1].x * a;
+    final ny = nm[i].y * (1 - a) + nm[i + 1].y * a;
+    return _P(x + nx * u * half, y + ny * u * half);
+  }
+
+  // --- body with a dry, fingered tail
+  final bodyEnd = _uniform(rng, st.bodyEnd.$1, st.bodyEnd.$2);
+  final m = math.max(3, (bodyEnd * (n - 1)).toInt() + 1);
+  final wl = _smoothWobble(rng, m, st.wobble);
+  final wr = _smoothWobble(rng, m, st.wobble);
+  final hr = st.headRound;
+  final left = <_P>[], right = <_P>[];
+  for (var i = 0; i < m; i++) {
+    final t = i / (n - 1);
+    final head = (1 - 3 * hr) +
+        3 * hr * math.sqrt(math.min(1.0, t / (0.06 + hr)));
+    left.add(at(t, head * wl[i]));
+    right.add(at(t, -head * wr[i]));
+  }
+  final tb = (m - 1) / (n - 1);
+
+  final nf = math.max(3, math.min(st.fingers, (w / st.fingerPx).round()));
+  final cuts = List<double>.generate(nf - 1, (_) => _uniform(rng, -0.95, 0.95))
+    ..sort();
+  final bounds = <double>[1.0, ...cuts.reversed, -1.0];
+  final tail = <_P>[];
+  for (var f = 0; f < nf; f++) {
+    final uHi = bounds[f], uLo = bounds[f + 1];
+    final uMid = (uHi + uLo) / 2;
+    final reach =
+        tb + (1 - tb) * math.pow(rng.nextDouble(), 1.3).toDouble();
+    final valley = tb - _uniform(rng, 0.0, 0.08);
+    tail.add(at(valley, uHi * 0.97));
+    tail.add(at((valley + reach) / 2, uHi - (uHi - uLo) * 0.2));
+    tail.add(at(reach, uMid));
+    tail.add(at((valley + reach) / 2, uLo + (uHi - uLo) * 0.2));
+  }
+  tail.add(at(tb - _uniform(rng, 0, 0.04), -0.97));
+  final body = <_P>[
+    at(-hr * 0.7, 0.6),
+    ...left,
+    ...tail,
+    ...right.reversed,
+    at(-hr * 0.7, -0.6),
+  ];
+  out.add(BrushStroke(
+    kind: StrokeKind.fill,
+    points: _flat(body),
+    width: 0,
+    color: _rgb(c),
+    opacity: st.opacity,
+    layer: layer,
+  ));
+
+  if (w < 4) return;
+
+  // --- faint, broken bristle tracks
+  if (bristleAmount > 0) {
+    final k = math.max(3, math.min(st.streaks, (w / st.streakPx).round()));
+    for (var s = 0; s < k; s++) {
+      final u = ((s + 0.5) / k * 2 - 1) * 0.85 + _uniform(rng, -0.05, 0.05);
+      final t0 = _uniform(rng, 0.02, 0.45);
+      final t1 = math.min(0.98, t0 + _uniform(rng, 0.25, 0.7));
+      final seg = [for (var q = 0; q < 6; q++) at(t0 + (t1 - t0) * q / 5, u)];
+      final v = _gauss(rng) * st.streakContrast * bristleAmount;
+      out.add(BrushStroke(
+        kind: StrokeKind.line,
+        points: _flat(seg),
+        width: w / k * _uniform(rng, 0.3, 0.6),
+        color: _rgb(v > 0 ? lighter(v) : darker(-v)),
+        opacity: _uniform(rng, 0.25, 0.55),
+        layer: layer,
+      ));
+    }
+  }
+
+  // --- impasto: short broken ridge highlights + a soft shadow
+  if (st.impasto > 0 && w >= 7) {
+    const lx = -0.6, ly = -0.8; // light from top-left
+    final mid = n ~/ 2;
+    final side = nm[mid].x * lx + nm[mid].y * ly > 0 ? 1.0 : -1.0;
+    final count = 1 + rng.nextInt(2);
+    for (var q = 0; q < count; q++) {
+      final t0 = _uniform(rng, 0.05, 0.55);
+      final t1 = t0 + _uniform(rng, 0.12, 0.3);
+      final u = side * _uniform(rng, 0.45, 0.75);
+      out.add(BrushStroke(
+        kind: StrokeKind.line,
+        points: _flat([for (var r = 0; r < 5; r++) at(t0 + (t1 - t0) * r / 4, u)]),
+        width: w * 0.06,
+        color: _rgb(lighter(0.4)),
+        opacity: 0.38 * st.impasto,
+        layer: layer,
+      ));
+    }
+    final t0 = _uniform(rng, 0.1, 0.4);
+    final t1 = math.min(tb, t0 + _uniform(rng, 0.25, 0.45));
+    out.add(BrushStroke(
+      kind: StrokeKind.line,
+      points: _flat(
+          [for (var r = 0; r < 5; r++) at(t0 + (t1 - t0) * r / 4, -side * 0.8)]),
+      width: w * 0.08,
+      color: _rgb(darker(0.3)),
+      opacity: 0.22 * st.impasto,
+      layer: layer,
+    ));
+  }
 }
 
 // ---------------------------------------------------------------- drawing

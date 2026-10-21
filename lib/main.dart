@@ -523,7 +523,7 @@ class _StudioPageState extends State<StudioPage> {
             (v) => s.copyWith(vibrance: v)),
       _slider('Kleurvariatie', s.colorJitter, 0.0, 2.5,
           (v) => s.copyWith(colorJitter: v)),
-      if (spec.bristles > 0)
+      if (spec.bristles > 0 || spec.brush == BrushModel.flat)
         _slider('Penseelharen', s.bristles, 0.0, 2.0,
             (v) => s.copyWith(bristles: v)),
     ];
