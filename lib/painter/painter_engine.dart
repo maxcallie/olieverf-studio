@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'color_map.dart';
 import 'image_ops.dart';
 import 'models.dart';
+import 'sketch_engine.dart';
 
 /// Turns a photo into a list of vector strokes in one of the [PaintStyle]s.
 ///
@@ -73,6 +74,18 @@ Painting paintPhoto(SourceImage src, PaintSettings s) {
   // 1. focal point + focus weight per pixel (1 = in focus)
   final (fe, fx, fy) = _focusMap(r, g, b, w, h, s);
 
+  final spec = s.style.spec;
+  if (spec.isSketch) {
+    return Painting(
+      width: w,
+      height: h,
+      paperColor: s.paperColor,
+      strokes: sketchPhoto(r, g, b, w, h, fx, fy, spec, cmap, s, rng),
+      focusX: fx / w,
+      focusY: fy / h,
+    );
+  }
+
   // 2. simplify into masses: edge-preserving smoothing + value bands,
   //    stronger away from the focus
   if (s.simplify > 0) {
@@ -99,10 +112,7 @@ Painting paintPhoto(SourceImage src, PaintSettings s) {
   }
 
   final ctx = _Ctx(w, h, r, g, b, lum, paper);
-  final spec = s.style.spec;
-  final strokes = spec.isSketch
-      ? _sketch(ctx, spec, cmap, s, rng, fe)
-      : _paint(ctx, spec, cmap, s, rng, fe);
+  final strokes = _paint(ctx, spec, cmap, s, rng, fe);
 
   return Painting(
     width: w,
@@ -890,201 +900,4 @@ void _flatStroke(List<_P> line, double w, List<double> c, math.Random rng,
       layer: layer,
     ));
   }
-}
-
-// ---------------------------------------------------------------- drawing
-
-List<BrushStroke> _sketch(_Ctx c, StyleSpec st, ColorMap cmap,
-    PaintSettings s, math.Random rng, Float32List fe) {
-  final w = c.w, h = c.h, n = w * h;
-  final strokes = <BrushStroke>[];
-  final darkPaper = lumOf(c.paper) < 0.4;
-  final ink = darkPaper ? const [0.95, 0.95, 0.93] : cmap.ink;
-  final colored = !darkPaper &&
-      (cmap.mode == ColorMode.kleur || cmap.mode == ColorMode.palet);
-  final sc = math.max(w, h) / 700.0 * s.brushSize;
-  final densityScale = math.sqrt(math.max(0.4, s.detail));
-
-  // tone = how much ink a spot needs (0..1), contrast-stretched
-  final toneL = gaussianBlur(c.lum, w, h, 1.5 * sc);
-  final tone = Float32List(n);
-  for (var i = 0; i < n; i++) {
-    tone[i] = darkPaper ? toneL[i] : 1 - toneL[i];
-  }
-  final lo = percentile(tone, 0.02), hi = percentile(tone, 0.98);
-  for (var i = 0; i < n; i++) {
-    tone[i] = clamp01((tone[i] - lo) / (hi - lo + 1e-6));
-  }
-  final col = <Float32List>[
-    gaussianBlur(c.r, w, h, 2 * sc),
-    gaussianBlur(c.g, w, h, 2 * sc),
-    gaussianBlur(c.b, w, h, 2 * sc),
-  ];
-  final ang = _flow(c, 6 * sc);
-
-  int inkAt(double x, double y, double darken) {
-    if (!colored) return _rgb(ink);
-    final j = c.idx(x, y);
-    final m = cmap([col[0][j], col[1][j], col[2][j]]);
-    return _rgb([m[0] * darken, m[1] * darken, m[2] * darken]);
-  }
-
-  void addLine(List<_P> pts, double width, int color, double alpha,
-      {int layer = 0}) {
-    strokes.add(BrushStroke(
-      kind: StrokeKind.line,
-      points: _flat(pts),
-      width: width,
-      color: color,
-      opacity: alpha,
-      layer: layer,
-    ));
-  }
-
-  double contourAlpha, contourWidth;
-  if (st.hatch == HatchKind.cross) {
-    // pen & ink: families of parallel lines, more families in darker tones
-    final spacing = 4.2 * sc / densityScale;
-    const fams = [
-      [math.pi / 4, 0.18],
-      [-math.pi / 4, 0.38],
-      [0.0, 0.58],
-      [math.pi / 2, 0.78],
-    ];
-    final diag = math.sqrt(w * w + h * h.toDouble());
-    final cx = w / 2, cy = h / 2;
-    final stepL = 1.5 * sc;
-    for (final fam in fams) {
-      final a = fam[0], thr = fam[1];
-      final dx = math.cos(a), dy = math.sin(a);
-      final nx = -dy, ny = dx;
-      for (var o = -diag / 2 + rng.nextDouble() * spacing;
-          o < diag / 2;
-          o += spacing) {
-        final seg = <_P>[];
-        void flush() {
-          if (seg.length >= 3) {
-            final mid = seg[seg.length ~/ 2];
-            addLine([seg.first, seg.last], 0.7 * sc, inkAt(mid.x, mid.y, 0.75),
-                0.9);
-          }
-          seg.clear();
-        }
-
-        for (var t = -diag / 2; t < diag / 2; t += stepL) {
-          final x = cx + nx * o + dx * t, y = cy + ny * o + dy * t;
-          final inside = x >= 0 && x < w && y >= 0 && y < h;
-          final on = inside &&
-              tone[c.idx(x, y)] > thr + (rng.nextDouble() - 0.5) * 0.04;
-          if (on) {
-            seg.add(_P(x, y));
-          } else if (seg.isNotEmpty) {
-            flush();
-          }
-        }
-        flush();
-      }
-    }
-    contourAlpha = 0.9;
-    contourWidth = 0.9;
-  } else {
-    // pencil: short diagonal hatch strokes, density follows tone
-    const levels = [
-      [0.12, -0.75],
-      [0.38, -0.25],
-      [0.62, 0.55],
-    ];
-    final step = 3.6 * sc / densityScale;
-    for (final lv in levels) {
-      final thr = lv[0], baseA = lv[1];
-      for (var y = -rng.nextDouble() * step; y < h; y += step) {
-        for (var x = -rng.nextDouble() * step; x < w; x += step) {
-          final px = x + (rng.nextDouble() - 0.5) * step;
-          final py = y + (rng.nextDouble() - 0.5) * step;
-          final t = tone[c.idx(px, py)];
-          final f = fe[c.idx(px, py)];
-          if (t > thr && rng.nextDouble() < (t - thr) * 2.2 * (0.6 + 0.4 * f)) {
-            final a = baseA + (rng.nextDouble() - 0.5) * 0.25;
-            final ln = (8 + rng.nextDouble() * 10) * sc * s.strokeLength;
-            final ddx = math.cos(a) * ln / 2, ddy = math.sin(a) * ln / 2;
-            final bend = (rng.nextDouble() - 0.5) * 0.8 * sc;
-            addLine(
-              [
-                _P(px - ddx, py - ddy),
-                _P(px - math.sin(a) * bend, py + math.cos(a) * bend),
-                _P(px + ddx, py + ddy),
-              ],
-              (0.55 + rng.nextDouble() * 0.4) * sc,
-              inkAt(px, py, 0.7),
-              0.22 + 0.3 * t,
-            );
-          }
-        }
-      }
-    }
-    contourAlpha = 0.55;
-    contourWidth = 0.8;
-  }
-
-  // contour lines along strong edges (both drawing styles)
-  final (gx, gy) = sobel(gaussianBlur(c.lum, w, h, 1.0 * sc), w, h);
-  final edge = Float32List(n);
-  for (var i = 0; i < n; i++) {
-    edge[i] = math.sqrt(gx[i] * gx[i] + gy[i] * gy[i]);
-  }
-  final eNorm = percentile(edge, 0.96) + 1e-6;
-  for (var i = 0; i < n; i++) {
-    edge[i] = clamp01(edge[i] / eNorm);
-  }
-  final cStep = 3.0 * sc / densityScale;
-  for (var y = -rng.nextDouble() * cStep; y < h; y += cStep) {
-    for (var x = -rng.nextDouble() * cStep; x < w; x += cStep) {
-      final px = x + (rng.nextDouble() - 0.5) * cStep;
-      final py = y + (rng.nextDouble() - 0.5) * cStep;
-      final e = edge[c.idx(px, py)];
-      final f = fe[c.idx(px, py)];
-      if (e > 0.35 + 0.3 * (1 - f) && rng.nextDouble() < e) {
-        final line = _traceEdge(c, px, py, ang, edge, sc, s.strokeLength);
-        if (line.length >= 2) {
-          addLine(line, contourWidth * sc * (0.7 + 0.5 * e), inkAt(px, py, 0.6),
-              contourAlpha * (0.5 + 0.5 * e),
-              layer: 1);
-        }
-      }
-    }
-  }
-  return strokes;
-}
-
-List<_P> _traceEdge(_Ctx c, double x, double y, Float32List ang,
-    Float32List edge, double sc, double length) {
-  final step = 2.0 * sc;
-  final n = (8 * length).toInt() + 2;
-  final a0 = ang[c.idx(x, y)];
-  final fwd = <_P>[], bwd = <_P>[];
-  for (final sgn in const [1.0, -1.0]) {
-    final acc = sgn > 0 ? fwd : bwd;
-    var cx = x, cy = y;
-    var dx = math.cos(a0) * sgn, dy = math.sin(a0) * sgn;
-    for (var i = 0; i < n; i++) {
-      final a = ang[c.idx(cx, cy)];
-      var nx = math.cos(a), ny = math.sin(a);
-      if (nx * dx + ny * dy < 0) {
-        nx = -nx;
-        ny = -ny;
-      }
-      dx = dx * 0.5 + nx * 0.5;
-      dy = dy * 0.5 + ny * 0.5;
-      var d = math.sqrt(dx * dx + dy * dy);
-      if (d == 0) d = 1;
-      dx /= d;
-      dy /= d;
-      cx += dx * step;
-      cy += dy * step;
-      if (cx < 0 || cy < 0 || cx >= c.w || cy >= c.h) break;
-      if (edge[c.idx(cx, cy)] < 0.2) break;
-      acc.add(_P(cx, cy));
-    }
-  }
-  return <_P>[...bwd.reversed, _P(x, y), ...fwd];
 }

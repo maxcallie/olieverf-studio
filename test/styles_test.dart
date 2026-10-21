@@ -124,6 +124,15 @@ void main() {
       PaintSettings(
           workSize: 500, focusX: 0.62, focusY: 0.42, paperColor: 0xA86A45),
     );
+    final dog = _load('ci/test_dog.jpg', 700);
+    for (final st in [PaintStyle.potlood, PaintStyle.pen, PaintStyle.olieverf]) {
+      final p = paintPhoto(
+          dog,
+          PaintSettings(
+              style: st, workSize: 700, paperColor: st.spec.paper));
+      File('$out/hond_${st.name}.svg')
+          .writeAsStringSync(paintingToSvg(p, outputScale: 1));
+    }
     File('$out/olieverf_focus_rechteroog.svg')
         .writeAsStringSync(paintingToSvg(tapped, outputScale: 1));
   }, skip: out == null ? 'GALLERY_OUT not set' : false);
